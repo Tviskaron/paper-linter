@@ -1,20 +1,31 @@
 mod cap001;
+mod cap002;
 mod cmt001;
 pub(crate) mod citations;
 mod env001;
 mod fig001;
 mod fig002;
 mod fig003;
+mod fig004;
+mod fig005;
+mod fig006;
 mod fmt001;
 mod fmt002;
+mod lat001;
+mod lat002;
 mod lbl001;
 mod prj001;
 mod prj002;
 mod prj003;
 mod prj004;
+mod mth001;
+mod ref001;
 mod sec001;
 mod sec002;
+mod sec003;
+mod sec004;
 mod tab001;
+mod tab002;
 mod tex001;
 mod txt001;
 mod txt002;
@@ -33,12 +44,20 @@ pub trait Rule: Sync {
     fn code(&self) -> &'static str;
     fn name(&self) -> &'static str;
     fn check_file(&self, path: &Path, content: &str) -> Vec<Diagnostic>;
+
+    fn strict_only(&self) -> bool {
+        false
+    }
 }
 
 pub trait ProjectRule: Sync {
     fn code(&self) -> &'static str;
     fn name(&self) -> &'static str;
     fn check_project(&self, project: &ProjectIndex) -> Vec<Diagnostic>;
+
+    fn strict_only(&self) -> bool {
+        false
+    }
 }
 
 pub trait GraphProjectRule: Sync {
@@ -52,6 +71,10 @@ static FMT001_RULE: fmt001::MissingFinalNewline = fmt001::MissingFinalNewline;
 static FMT002_RULE: fmt002::RepeatedBlankLines = fmt002::RepeatedBlankLines;
 static SEC001_RULE: sec001::SkippedSectionLevel = sec001::SkippedSectionLevel;
 static SEC002_RULE: sec002::EmptySection = sec002::EmptySection;
+static SEC003_RULE: sec003::SingletonSubdivision = sec003::SingletonSubdivision;
+static SEC004_RULE: sec004::StackedHeadings = sec004::StackedHeadings;
+static MTH001_RULE: mth001::DoubleDollarDisplayMath = mth001::DoubleDollarDisplayMath;
+static LAT002_RULE: lat002::PrimitiveTex = lat002::PrimitiveTex;
 static TEX001_RULE: tex001::MissingNonBreakingSpace = tex001::MissingNonBreakingSpace;
 static TXT001_RULE: txt001::PlaceholderText = txt001::PlaceholderText;
 static TXT002_RULE: txt002::RepeatedWords = txt002::RepeatedWords;
@@ -60,12 +83,16 @@ static TXT004_RULE: txt004::FillerWords = txt004::FillerWords;
 static TXT005_RULE: txt005::PassiveVoice = txt005::PassiveVoice;
 static CMT001_RULE: cmt001::EditorialComment = cmt001::EditorialComment;
 static WS001_RULE: ws001::TrailingWhitespace = ws001::TrailingWhitespace;
-static RULES: [&dyn Rule; 13] = [
+static RULES: [&dyn Rule; 17] = [
     &ENV001_RULE,
     &FMT001_RULE,
     &FMT002_RULE,
     &SEC001_RULE,
     &SEC002_RULE,
+    &SEC003_RULE,
+    &SEC004_RULE,
+    &MTH001_RULE,
+    &LAT002_RULE,
     &TEX001_RULE,
     &TXT001_RULE,
     &TXT002_RULE,
@@ -78,16 +105,30 @@ static RULES: [&dyn Rule; 13] = [
 
 static FIG001_RULE: fig001::MissingAsset = fig001::MissingAsset;
 static CAP001_RULE: cap001::MissingCaption = cap001::MissingCaption;
+static CAP002_RULE: cap002::CaptionPunctuation = cap002::CaptionPunctuation;
 static FIG002_RULE: fig002::OrphanFigure = fig002::OrphanFigure;
 static FIG003_RULE: fig003::AssetCaseMismatch = fig003::AssetCaseMismatch;
+static FIG004_RULE: fig004::MissingFigureLabel = fig004::MissingFigureLabel;
+static FIG005_RULE: fig005::UnsafeGraphicPath = fig005::UnsafeGraphicPath;
+static FIG006_RULE: fig006::ImageFormatPolicy = fig006::ImageFormatPolicy;
 static TAB001_RULE: tab001::OrphanTable = tab001::OrphanTable;
+static TAB002_RULE: tab002::MissingTableLabel = tab002::MissingTableLabel;
+static LAT001_RULE: lat001::LegacyLatex = lat001::LegacyLatex;
 static LBL001_RULE: lbl001::UnusedLabel = lbl001::UnusedLabel;
-static PROJECT_RULES: [&dyn ProjectRule; 6] = [
+static REF001_RULE: ref001::MissingReferenceTarget = ref001::MissingReferenceTarget;
+static PROJECT_RULES: [&dyn ProjectRule; 13] = [
     &FIG001_RULE,
     &CAP001_RULE,
+    &CAP002_RULE,
     &FIG002_RULE,
     &FIG003_RULE,
+    &FIG004_RULE,
+    &FIG005_RULE,
+    &FIG006_RULE,
     &TAB001_RULE,
+    &TAB002_RULE,
+    &LAT001_RULE,
+    &REF001_RULE,
     &LBL001_RULE,
 ];
 
@@ -124,7 +165,7 @@ pub struct RuleInfo {
     pub fix: &'static str,
 }
 
-static RULE_INFOS: [RuleInfo; 28] = [
+static RULE_INFOS: [RuleInfo; 43] = [
     RuleInfo {
         code: "CMT001",
         name: "editorial comment",
@@ -140,6 +181,14 @@ static RULE_INFOS: [RuleInfo; 28] = [
         summary: "A figure or table float has no caption.",
         why: "Captions make floats understandable on their own and are required by most paper styles.",
         fix: "Add a \\caption{...} inside the float.",
+    },
+    RuleInfo {
+        code: "CAP002",
+        name: "caption punctuation",
+        default_severity: Severity::Warning,
+        summary: "A figure or table caption does not end with sentence punctuation.",
+        why: "Some venues and paper style guides expect captions to read as complete punctuated sentences.",
+        fix: "End the caption with '.', '?', or '!'.",
     },
     RuleInfo {
         code: "CIT001",
@@ -190,6 +239,30 @@ static RULE_INFOS: [RuleInfo; 28] = [
         fix: "Compare the entries, delete the duplicate if they describe the same paper, or make the titles/metadata precise if they are different papers.",
     },
     RuleInfo {
+        code: "CIT007",
+        name: "duplicate bibliography declaration",
+        default_severity: Severity::Warning,
+        summary: "The same bibliography file is declared more than once from reachable TeX sources.",
+        why: "Repeated bibliography declarations can duplicate rendered references or hide which bibliography source is intended.",
+        fix: "Remove the duplicate \\bibliography or \\addbibresource declaration, unless a package such as chapterbib intentionally manages multiple bibliographies.",
+    },
+    RuleInfo {
+        code: "CIT008",
+        name: "punctuation before citation",
+        default_severity: Severity::Warning,
+        summary: "Sentence punctuation appears before a citation command instead of after it.",
+        why: "Most paper styles place punctuation after the citation so the citation belongs to the sentence.",
+        fix: "Move punctuation after the citation, for example text~\\cite{key}.",
+    },
+    RuleInfo {
+        code: "CIT009",
+        name: "collapsible consecutive citations",
+        default_severity: Severity::Warning,
+        summary: "Adjacent compatible citation commands can be collapsed into one command.",
+        why: "Merged citations are shorter, easier to edit, and usually render more cleanly.",
+        fix: "Merge adjacent citations with the same command, for example \\cite{a,b}.",
+    },
+    RuleInfo {
         code: "ENV001",
         name: "environment begin/end mismatch",
         default_severity: Severity::Error,
@@ -214,6 +287,38 @@ static RULE_INFOS: [RuleInfo; 28] = [
         fix: "Reference the figure with \\ref{...} or remove the unused figure/label.",
     },
     RuleInfo {
+        code: "FIG003",
+        name: "asset case mismatch",
+        default_severity: Severity::Error,
+        summary: "A figure asset path differs from an existing filename only by letter case.",
+        why: "Case mismatches compile on some local filesystems but fail on case-sensitive CI, Linux, or arXiv environments.",
+        fix: "Match the case in the \\includegraphics path to the actual asset filename.",
+    },
+    RuleInfo {
+        code: "FIG004",
+        name: "figure label missing",
+        default_severity: Severity::Warning,
+        summary: "A figure-like float has content but no label.",
+        why: "Unlabeled figures cannot be referenced robustly and often lead authors to hard-code figure numbers.",
+        fix: "Add a \\label{fig:...} near the figure caption.",
+    },
+    RuleInfo {
+        code: "FIG005",
+        name: "unsafe graphic path",
+        default_severity: Severity::Warning,
+        summary: "A graphics path is absolute, traverses parent directories, or uses a platform-specific drive prefix.",
+        why: "Non-portable graphics paths break CI, collaborators' checkouts, arXiv bundles, and camera-ready packaging.",
+        fix: "Use a project-relative path inside the repository.",
+    },
+    RuleInfo {
+        code: "FIG006",
+        name: "image format",
+        default_severity: Severity::Warning,
+        summary: "A figure uses an explicit image extension outside the supported format set.",
+        why: "Unsupported or unusual image formats often fail in CI, TeX engines, arXiv, or camera-ready packaging.",
+        fix: "Use pdf, png, jpg, jpeg, eps, or svg.",
+    },
+    RuleInfo {
         code: "FMT001",
         name: "missing final newline",
         default_severity: Severity::Warning,
@@ -236,6 +341,30 @@ static RULE_INFOS: [RuleInfo; 28] = [
         summary: "A non-float label is never referenced from reachable TeX sources.",
         why: "Unused labels usually indicate stale anchors or missing references.",
         fix: "Reference the label with \\ref{...} or remove it.",
+    },
+    RuleInfo {
+        code: "LAT001",
+        name: "legacy latex",
+        default_severity: Severity::Warning,
+        summary: "A file uses legacy LaTeX commands, environments, or packages.",
+        why: "Legacy constructs often interact poorly with modern packages, templates, and publisher tooling.",
+        fix: "Use the modern LaTeX replacement suggested by the diagnostic hint.",
+    },
+    RuleInfo {
+        code: "LAT002",
+        name: "primitive tex",
+        default_severity: Severity::Warning,
+        summary: "A file uses low-level TeX primitives in LaTeX source.",
+        why: "Primitive TeX commands are harder to maintain and can bypass LaTeX package/template conventions.",
+        fix: "Use a LaTeX-level replacement where possible.",
+    },
+    RuleInfo {
+        code: "MTH001",
+        name: "double-dollar display math",
+        default_severity: Severity::Warning,
+        summary: "A file uses TeX-style $$ display math delimiters.",
+        why: "In LaTeX, \\[...\\] or named display math environments are safer and avoid spacing/package edge cases.",
+        fix: "Replace $$...$$ with \\[...\\] or an appropriate display math environment.",
     },
     RuleInfo {
         code: "PRJ001",
@@ -270,6 +399,14 @@ static RULE_INFOS: [RuleInfo; 28] = [
         fix: "Include the file from the root document or remove the stray .tex file.",
     },
     RuleInfo {
+        code: "REF001",
+        name: "missing reference target",
+        default_severity: Severity::Error,
+        summary: "A reference command points to a label that is not defined in reachable TeX sources.",
+        why: "Missing reference targets usually become unresolved references in the rendered PDF and often indicate a typo or missing included file.",
+        fix: "Add the matching \\label{...}, fix the reference key, or make sure the file defining the label is reachable from the project root.",
+    },
+    RuleInfo {
         code: "SEC001",
         name: "skipped section hierarchy level",
         default_severity: Severity::Warning,
@@ -286,12 +423,36 @@ static RULE_INFOS: [RuleInfo; 28] = [
         fix: "Add content under the heading or remove the empty section.",
     },
     RuleInfo {
+        code: "SEC003",
+        name: "singleton subdivision",
+        default_severity: Severity::Warning,
+        summary: "A section or subsection has exactly one direct child subdivision.",
+        why: "A single subdivision usually means the outline can be flattened or needs another peer subdivision.",
+        fix: "Merge the subdivision into the parent or add a peer subdivision.",
+    },
+    RuleInfo {
+        code: "SEC004",
+        name: "stacked headings",
+        default_severity: Severity::Warning,
+        summary: "Two section headings appear without meaningful text between them.",
+        why: "Stacked headings often indicate an outline placeholder or a section that should be flattened.",
+        fix: "Add introductory text between the headings or remove the extra heading.",
+    },
+    RuleInfo {
         code: "TAB001",
         name: "orphan table",
         default_severity: Severity::Warning,
         summary: "A table label is not referenced from reachable TeX sources.",
         why: "Unreferenced tables are often stale draft material or missing narrative links in the paper.",
         fix: "Reference the table with \\ref{...} or remove the unused table/label.",
+    },
+    RuleInfo {
+        code: "TAB002",
+        name: "table label missing",
+        default_severity: Severity::Warning,
+        summary: "A table-like float has a caption but no label.",
+        why: "Unlabeled tables cannot be referenced robustly and often lead authors to hard-code table numbers.",
+        fix: "Add a \\label{tab:...} near the table caption.",
     },
     RuleInfo {
         code: "TEX001",
@@ -371,8 +532,9 @@ mod tests {
         assert_eq!(
             codes,
             vec![
-                "ENV001", "FMT001", "FMT002", "SEC001", "SEC002", "TEX001", "TXT001", "TXT002",
-                "TXT003", "TXT004", "TXT005", "CMT001", "WS001"
+                "ENV001", "FMT001", "FMT002", "SEC001", "SEC002", "SEC003", "SEC004", "MTH001",
+                "LAT002", "TEX001", "TXT001", "TXT002", "TXT003", "TXT004", "TXT005", "CMT001",
+                "WS001"
             ]
         );
     }
@@ -382,7 +544,10 @@ mod tests {
         let codes: Vec<_> = all_project_rules().iter().map(|rule| rule.code()).collect();
         assert_eq!(
             codes,
-            vec!["FIG001", "CAP001", "FIG002", "FIG003", "TAB001", "LBL001"]
+            vec![
+                "FIG001", "CAP001", "CAP002", "FIG002", "FIG003", "FIG004", "FIG005", "FIG006",
+                "TAB001", "TAB002", "LAT001", "REF001", "LBL001"
+            ]
         );
     }
 
@@ -412,10 +577,17 @@ mod tests {
     fn rule_info_catalog_contains_all_known_codes() {
         let codes: Vec<_> = rule_infos().iter().map(|rule| rule.code).collect();
 
-        assert_eq!(codes.len(), 28);
-        assert!(codes.contains(&"PRJ001"));
-        assert!(codes.contains(&"TXT003"));
-        assert!(codes.contains(&"CMT001"));
+        assert_eq!(
+            codes,
+            vec![
+                "CMT001", "CAP001", "CAP002", "CIT001", "CIT002", "CIT003", "CIT004", "CIT005",
+                "CIT006", "CIT007", "CIT008", "CIT009", "ENV001", "FIG001", "FIG002", "FIG003",
+                "FIG004", "FIG005", "FIG006", "FMT001", "FMT002", "LBL001", "LAT001", "LAT002",
+                "MTH001", "PRJ001", "PRJ002", "PRJ003", "PRJ004", "REF001", "SEC001", "SEC002",
+                "SEC003", "SEC004", "TAB001", "TAB002", "TEX001", "TXT001", "TXT002", "TXT003",
+                "TXT004", "TXT005", "WS001"
+            ]
+        );
     }
 
     #[test]

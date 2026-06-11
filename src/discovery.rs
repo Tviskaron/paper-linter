@@ -10,8 +10,12 @@ pub fn discover_tex_files(paths: &[PathBuf], all_tex: bool) -> io::Result<Vec<Pa
             if is_tex_file(path) {
                 if all_tex {
                     files.push(path.clone());
+                } else if let Some(root) = magic_root_path(path)? {
+                    let project_root = root.parent().unwrap_or_else(|| Path::new(""));
+                    collect_reachable_tex_files(project_root, &root, &mut files)?;
                 } else {
-                    collect_reachable_tex_files(path, &mut files)?;
+                    let project_root = path.parent().unwrap_or_else(|| Path::new(""));
+                    collect_reachable_tex_files(project_root, path, &mut files)?;
                 }
             }
         } else if path.is_dir() {
@@ -44,7 +48,7 @@ fn collect_project_tex_files(dir: &Path, files: &mut Vec<PathBuf>) -> io::Result
     }
 
     for root in roots {
-        collect_reachable_tex_files(&root, files)?;
+        collect_reachable_tex_files(dir, &root, files)?;
     }
 
     Ok(())
@@ -90,6 +94,15 @@ fn primary_roots(dir: &Path, candidates: &[PathBuf]) -> io::Result<Vec<PathBuf>>
         .cloned()
         .collect();
     if !roots_with_bbl.is_empty() {
+        let top_level_roots_with_bbl: Vec<_> = roots_with_bbl
+            .iter()
+            .filter(|path| path.parent() == Some(dir))
+            .cloned()
+            .collect();
+        if !top_level_roots_with_bbl.is_empty() {
+            return Ok(top_level_roots_with_bbl);
+        }
+
         return Ok(roots_with_bbl);
     }
 
@@ -126,18 +139,43 @@ fn matching_bbl_path(path: &Path) -> PathBuf {
     bbl
 }
 
-fn collect_reachable_tex_files(root: &Path, files: &mut Vec<PathBuf>) -> io::Result<()> {
-    if files.iter().any(|file| file == root) {
+fn magic_root_path(path: &Path) -> io::Result<Option<PathBuf>> {
+    let content = fs::read_to_string(path)?;
+    let Some(raw_root) = find_magic_root(&content) else {
+        return Ok(None);
+    };
+
+    let mut root = path
+        .parent()
+        .unwrap_or_else(|| Path::new(""))
+        .join(raw_root.trim());
+    if root.extension().is_none() {
+        root.set_extension("tex");
+    }
+
+    if root.is_file() {
+        return root.canonicalize().map(Some);
+    }
+
+    Ok(None)
+}
+
+fn collect_reachable_tex_files(
+    project_root: &Path,
+    current_file: &Path,
+    files: &mut Vec<PathBuf>,
+) -> io::Result<()> {
+    if files.iter().any(|file| file == current_file) {
         return Ok(());
     }
 
-    let content = fs::read_to_string(root)?;
-    files.push(root.to_path_buf());
+    let content = fs::read_to_string(current_file)?;
+    files.push(current_file.to_path_buf());
 
     for input in find_input_paths(&content) {
-        let path = resolve_tex_input(root, &input);
+        let path = resolve_tex_input(project_root, current_file, &input);
         if path.is_file() {
-            collect_reachable_tex_files(&path, files)?;
+            collect_reachable_tex_files(project_root, &path, files)?;
         }
     }
 
@@ -146,6 +184,29 @@ fn collect_reachable_tex_files(root: &Path, files: &mut Vec<PathBuf>) -> io::Res
 
 fn declares_document(content: &str) -> bool {
     content.contains("\\documentclass") || content.contains("\\begin{document}")
+}
+
+fn find_magic_root(content: &str) -> Option<String> {
+    for line in content.lines() {
+        let trimmed = line.trim_start();
+        let Some(comment) = trimmed.strip_prefix('%') else {
+            continue;
+        };
+        let comment = comment.trim_start();
+        let comment = comment.strip_prefix('!').unwrap_or(comment).trim_start();
+        let lower = comment.to_ascii_lowercase();
+        if !lower.starts_with("tex root") {
+            continue;
+        }
+
+        let (_, value) = comment.split_once('=')?;
+        let value = value.trim().trim_matches('"').trim_matches('\'');
+        if !value.is_empty() {
+            return Some(value.to_string());
+        }
+    }
+
+    None
 }
 
 fn is_main_like_name(name: &str) -> bool {
@@ -176,31 +237,49 @@ fn find_input_paths(content: &str) -> Vec<String> {
             continue;
         }
 
-        let Some((body_start, body_end)) = read_required_argument(content, after_name) else {
+        let Some((input, end)) = read_input_argument(content, after_name) else {
             offset = after_name;
             continue;
         };
 
-        let input = content[body_start..body_end].trim();
         if !input.is_empty() {
-            paths.push(input.to_string());
+            paths.push(input);
         }
 
-        offset = body_end + 1;
+        offset = end;
     }
 
     paths
 }
 
-fn resolve_tex_input(root: &Path, input: &str) -> PathBuf {
-    let mut path = root
+fn resolve_tex_input(project_root: &Path, current_file: &Path, input: &str) -> PathBuf {
+    if !is_tex_like_input(input) {
+        return PathBuf::new();
+    }
+
+    let mut current_relative = current_file
         .parent()
         .unwrap_or_else(|| Path::new(""))
         .join(input.trim());
-    if path.extension().is_none() {
-        path.set_extension("tex");
+    if current_relative.extension().is_none() {
+        current_relative.set_extension("tex");
     }
-    path
+    if current_relative.is_file() {
+        return current_relative;
+    }
+
+    let mut root_relative = project_root.join(input.trim());
+    if root_relative.extension().is_none() {
+        root_relative.set_extension("tex");
+    }
+    root_relative
+}
+
+fn is_tex_like_input(input: &str) -> bool {
+    let path = Path::new(input.trim());
+    path.extension()
+        .and_then(|extension| extension.to_str())
+        .is_none_or(|extension| extension.eq_ignore_ascii_case("tex"))
 }
 
 fn read_command_name(content: &str, slash_index: usize) -> Option<(&str, usize)> {
@@ -230,6 +309,29 @@ fn read_required_argument(content: &str, mut offset: usize) -> Option<(usize, us
 
     let end = balanced_group_end(content, offset, '{', '}')?;
     Some((offset + 1, end))
+}
+
+fn read_input_argument(content: &str, offset: usize) -> Option<(String, usize)> {
+    if let Some((body_start, body_end)) = read_required_argument(content, offset) {
+        return Some((
+            content[body_start..body_end].trim().to_string(),
+            body_end + 1,
+        ));
+    }
+
+    let bytes = content.as_bytes();
+    let path_start = skip_ascii_whitespace(content, offset);
+    let mut path_end = path_start;
+
+    while path_end < bytes.len() {
+        let byte = bytes[path_end];
+        if byte.is_ascii_whitespace() || matches!(byte, b'%' | b'{' | b'}' | b'\\') {
+            break;
+        }
+        path_end += 1;
+    }
+
+    (path_end > path_start).then(|| (content[path_start..path_end].trim().to_string(), path_end))
 }
 
 fn skip_ascii_whitespace(content: &str, mut offset: usize) -> usize {
@@ -292,4 +394,131 @@ fn is_commented_position(content: &str, byte_index: usize) -> bool {
     }
 
     false
+}
+
+#[cfg(test)]
+mod tests {
+    use std::fs;
+    use std::path::{Path, PathBuf};
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    use super::discover_tex_files;
+    use super::find_magic_root;
+    use super::magic_root_path;
+
+    fn temp_project(name: &str) -> PathBuf {
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system time before unix epoch")
+            .as_nanos();
+        let dir = std::env::temp_dir().join(format!("paper-linter-discovery-{name}-{nonce}"));
+        fs::create_dir_all(&dir).expect("failed to create temp project");
+        dir
+    }
+
+    fn write(path: &Path, content: &str) {
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent).expect("failed to create parent");
+        }
+        fs::write(path, content).expect("failed to write fixture");
+    }
+
+    #[test]
+    fn finds_tex_root_magic_comments() {
+        assert_eq!(
+            find_magic_root("%! TeX root = ../main.tex\n"),
+            Some("../main.tex".to_string())
+        );
+        assert_eq!(
+            find_magic_root("% !TEX root = paper\n"),
+            Some("paper".to_string())
+        );
+        assert_eq!(
+            find_magic_root("%! TEX root = \"manuscript.tex\"\n"),
+            Some("manuscript.tex".to_string())
+        );
+    }
+
+    #[test]
+    fn ignores_non_root_comments() {
+        assert_eq!(find_magic_root("% TODO root = main.tex\n"), None);
+    }
+
+    #[test]
+    fn resolves_magic_root_relative_to_current_file() {
+        let dir = temp_project("magic-root");
+        let section = dir.join("sections/method.tex");
+        let root = dir.join("main.tex");
+        write(&root, "\\documentclass{article}\n");
+        write(&section, "%! TeX root = ../main.tex\n");
+
+        assert_eq!(
+            magic_root_path(&section).expect("root should parse"),
+            root.canonicalize().ok()
+        );
+    }
+
+    #[test]
+    fn reachable_files_ignore_explicit_non_tex_inputs() {
+        let dir = temp_project("pgf-input");
+        let main = dir.join("main.tex");
+        let plot = dir.join("plot.pgf");
+        write(
+            &main,
+            "\\documentclass{article}\n\\begin{document}\n\\input{plot.pgf}\n\\end{document}\n",
+        );
+        write(&plot, "\\input{nested}\n");
+        write(&dir.join("nested.tex"), "\\label{nested}\n");
+
+        let files =
+            discover_tex_files(std::slice::from_ref(&dir), false).expect("should discover files");
+
+        assert_eq!(files, vec![main]);
+    }
+
+    #[test]
+    fn reachable_files_follow_bare_input_paths() {
+        let dir = temp_project("bare-input");
+        let main = dir.join("main.tex");
+        let section = dir.join("sections/method.tex");
+        write(&main, "\\documentclass{article}\n\\input sections/method\n");
+        write(&section, "\\label{sec:method}\n");
+
+        let files =
+            discover_tex_files(std::slice::from_ref(&dir), false).expect("should discover files");
+
+        assert_eq!(files, vec![main, section]);
+    }
+
+    #[test]
+    fn reachable_files_follow_root_relative_inputs_from_nested_files() {
+        let dir = temp_project("root-relative-input");
+        let main = dir.join("main.tex");
+        let supp = dir.join("src/supp/supp.tex");
+        let method = dir.join("src/supp/method.tex");
+        write(&main, "\\documentclass{article}\n\\input src/supp/supp\n");
+        write(&supp, "\\input src/supp/method\n");
+        write(&method, "\\label{sec:method}\n");
+
+        let files =
+            discover_tex_files(std::slice::from_ref(&dir), false).expect("should discover files");
+
+        assert_eq!(files, vec![main, method, supp]);
+    }
+
+    #[test]
+    fn project_roots_prefer_top_level_bbl() {
+        let dir = temp_project("duplicate-source-tree");
+        let main = dir.join("main.tex");
+        let nested = dir.join("copy/main.tex");
+        write(&main, "\\documentclass{article}\n");
+        write(&dir.join("main.bbl"), "\\bibitem{top}\n");
+        write(&nested, "\\documentclass{article}\n");
+        write(&dir.join("copy/main.bbl"), "\\bibitem{nested}\n");
+
+        let files =
+            discover_tex_files(std::slice::from_ref(&dir), false).expect("should discover files");
+
+        assert_eq!(files, vec![main]);
+    }
 }

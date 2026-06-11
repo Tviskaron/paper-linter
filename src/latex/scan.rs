@@ -77,12 +77,28 @@ pub struct GraphicsPath {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Caption {
+    pub text: String,
     pub location: SourceLocation,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Include {
     pub raw_path: String,
+    pub location: SourceLocation,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DocumentClass {
+    pub name: String,
+    pub options: Vec<String>,
+    pub location: SourceLocation,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PackageImport {
+    pub name: String,
+    pub options: Vec<String>,
+    pub command: String,
     pub location: SourceLocation,
 }
 
@@ -103,6 +119,8 @@ pub struct ScanResult {
     pub graphics: Vec<Graphic>,
     pub graphics_paths: Vec<GraphicsPath>,
     pub includes: Vec<Include>,
+    pub document_classes: Vec<DocumentClass>,
+    pub packages: Vec<PackageImport>,
     pub floats: Vec<FloatEnv>,
 }
 
@@ -120,6 +138,7 @@ struct ActiveEnv {
 pub fn scan_latex(file: impl Into<PathBuf>, content: &str) -> ScanResult {
     let file = file.into();
     let bytes = content.as_bytes();
+    let line_starts = line_starts(content);
     let mut result = ScanResult::default();
     let mut stack: Vec<ActiveEnv> = Vec::new();
     let mut index = 0;
@@ -140,7 +159,7 @@ pub fn scan_latex(file: impl Into<PathBuf>, content: &str) -> ScanResult {
             index += 1;
             continue;
         };
-        let (line, column) = line_column(content, command_start);
+        let (line, column) = line_column(&line_starts, command_start);
         let location = SourceLocation::new(file.clone(), line, column);
         let in_ignored = stack.iter().any(|env| env.ignored);
 
@@ -205,8 +224,8 @@ pub fn scan_latex(file: impl Into<PathBuf>, content: &str) -> ScanResult {
             }
             "caption" => {
                 let arg_start = skip_optional_args(content, after_command);
-                if let Some((_text, end)) = parse_required_arg(content, arg_start) {
-                    let caption = Caption { location };
+                if let Some((text, end)) = parse_required_arg(content, arg_start) {
+                    let caption = Caption { text, location };
                     attach_caption(&mut stack, caption.clone());
                     index = end;
                 } else {
@@ -243,8 +262,41 @@ pub fn scan_latex(file: impl Into<PathBuf>, content: &str) -> ScanResult {
                 }
             }
             "input" | "include" => {
-                if let Some((raw_path, end)) = parse_required_arg(content, after_command) {
+                if let Some((raw_path, end)) = parse_include_arg(content, after_command) {
                     result.includes.push(Include { raw_path, location });
+                    index = end;
+                } else {
+                    index = after_command;
+                }
+            }
+            "documentclass" => {
+                let (options, arg_start) = parse_optional_arg_values(content, after_command);
+                if let Some((name, end)) = parse_required_arg(content, arg_start) {
+                    result.document_classes.push(DocumentClass {
+                        name,
+                        options,
+                        location,
+                    });
+                    index = end;
+                } else {
+                    index = after_command;
+                }
+            }
+            "usepackage" | "RequirePackage" => {
+                let (options, arg_start) = parse_optional_arg_values(content, after_command);
+                if let Some((names, end)) = parse_required_arg(content, arg_start) {
+                    result
+                        .packages
+                        .extend(
+                            split_comma_list(&names)
+                                .into_iter()
+                                .map(|name| PackageImport {
+                                    name,
+                                    options: options.clone(),
+                                    command: command.clone(),
+                                    location: location.clone(),
+                                }),
+                        );
                     index = end;
                 } else {
                     index = after_command;
@@ -405,21 +457,56 @@ fn parse_graphics_paths(raw_paths: &str) -> Vec<String> {
     paths
 }
 
+fn parse_include_arg(content: &str, start: usize) -> Option<(String, usize)> {
+    if let Some((raw_path, end)) = parse_required_arg(content, start) {
+        return Some((raw_path, end));
+    }
+
+    let bytes = content.as_bytes();
+    let path_start = skip_ws(bytes, start);
+    let mut path_end = path_start;
+
+    while path_end < bytes.len() {
+        let byte = bytes[path_end];
+        if byte.is_ascii_whitespace() || matches!(byte, b'%' | b'{' | b'}' | b'\\') {
+            break;
+        }
+        path_end += 1;
+    }
+
+    (path_end > path_start).then(|| (content[path_start..path_end].trim().to_string(), path_end))
+}
+
 fn skip_optional_args(content: &str, start: usize) -> usize {
+    parse_optional_arg_values(content, start).1
+}
+
+fn parse_optional_arg_values(content: &str, start: usize) -> (Vec<String>, usize) {
     let bytes = content.as_bytes();
     let mut index = start;
+    let mut values = Vec::new();
 
     loop {
         index = skip_ws(bytes, index);
         if bytes.get(index) != Some(&b'[') {
-            return index;
+            return (values, index);
         }
 
         let Some(end) = skip_optional_arg(bytes, index) else {
-            return index;
+            return (values, index);
         };
+        values.extend(split_comma_list(&content[index + 1..end - 1]));
         index = end;
     }
+}
+
+fn split_comma_list(value: &str) -> Vec<String> {
+    value
+        .split(',')
+        .map(str::trim)
+        .filter(|item| !item.is_empty())
+        .map(ToOwned::to_owned)
+        .collect()
 }
 
 fn skip_optional_arg(bytes: &[u8], start: usize) -> Option<usize> {
@@ -473,23 +560,24 @@ fn is_escaped(bytes: &[u8], index: usize) -> bool {
     count % 2 == 1
 }
 
-fn line_column(content: &str, target: usize) -> (usize, usize) {
-    let mut line = 1usize;
-    let mut column = 1usize;
+fn line_starts(content: &str) -> Vec<usize> {
+    let mut starts = vec![0];
+    starts.extend(
+        content
+            .bytes()
+            .enumerate()
+            .filter_map(|(index, byte)| (byte == b'\n').then_some(index + 1)),
+    );
+    starts
+}
 
-    for (index, character) in content.char_indices() {
-        if index >= target {
-            break;
-        }
-        if character == '\n' {
-            line += 1;
-            column = 1;
-        } else {
-            column += 1;
-        }
-    }
-
-    (line, column)
+fn line_column(line_starts: &[usize], target: usize) -> (usize, usize) {
+    let line_index = match line_starts.binary_search(&target) {
+        Ok(index) => index,
+        Err(index) => index.saturating_sub(1),
+    };
+    let line_start = line_starts[line_index];
+    (line_index + 1, target - line_start + 1)
 }
 
 fn float_kind(env_name: &str) -> Option<FloatKind> {
@@ -535,6 +623,7 @@ mod tests {
         assert_eq!(scan.floats[0].kind, FloatKind::Figure);
         assert_eq!(scan.floats[0].graphics[0].raw_path, "figures/model");
         assert_eq!(scan.floats[0].captions.len(), 1);
+        assert_eq!(scan.floats[0].captions[0].text, "Long");
         assert_eq!(scan.floats[0].labels[0].key, "fig:model");
         assert_eq!(scan.labels[0].kind, LabelKind::Figure);
     }
@@ -568,7 +657,7 @@ mod tests {
     fn records_inputs_and_includes() {
         let scan = scan_latex(
             Path::new("paper.tex"),
-            "\\input{sections/method}\n\\include{sections/results}\n",
+            "\\input{sections/method}\n\\include sections/results\n",
         );
 
         let paths: Vec<_> = scan
@@ -577,6 +666,25 @@ mod tests {
             .map(|include| include.raw_path.as_str())
             .collect();
         assert_eq!(paths, vec!["sections/method", "sections/results"]);
+    }
+
+    #[test]
+    fn records_document_class_and_packages() {
+        let scan = scan_latex(
+            Path::new("paper.tex"),
+            "\\documentclass[twocolumn,10pt]{article}\n\\usepackage[sort&compress]{natbib,graphicx}\n\\RequirePackage{amsmath}\n",
+        );
+
+        assert_eq!(scan.document_classes.len(), 1);
+        assert_eq!(scan.document_classes[0].name, "article");
+        assert_eq!(scan.document_classes[0].options, vec!["twocolumn", "10pt"]);
+        assert_eq!(scan.packages.len(), 3);
+        assert_eq!(scan.packages[0].name, "natbib");
+        assert_eq!(scan.packages[0].options, vec!["sort&compress"]);
+        assert_eq!(scan.packages[0].command, "usepackage");
+        assert_eq!(scan.packages[1].name, "graphicx");
+        assert_eq!(scan.packages[2].name, "amsmath");
+        assert_eq!(scan.packages[2].command, "RequirePackage");
     }
 
     #[test]

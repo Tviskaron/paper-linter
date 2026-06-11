@@ -3,7 +3,9 @@ use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
 
-use crate::latex::scan::{scan_latex, FloatEnv, Graphic, GraphicsPath, Include, Label, Ref};
+use crate::latex::scan::{
+    scan_latex, DocumentClass, FloatEnv, Graphic, GraphicsPath, Include, Label, PackageImport, Ref,
+};
 
 const GRAPHICS_EXTENSIONS: [&str; 6] = ["pdf", "png", "jpg", "jpeg", "eps", "svg"];
 
@@ -21,6 +23,8 @@ pub struct ProjectIndex {
     pub refs: Vec<Ref>,
     pub graphics: Vec<Graphic>,
     pub graphics_paths: Vec<GraphicsPath>,
+    pub document_classes: Vec<DocumentClass>,
+    pub packages: Vec<PackageImport>,
     pub floats: Vec<FloatEnv>,
 }
 
@@ -35,6 +39,8 @@ impl ProjectIndex {
             refs: Vec::new(),
             graphics: Vec::new(),
             graphics_paths: Vec::new(),
+            document_classes: Vec::new(),
+            packages: Vec::new(),
             floats: Vec::new(),
         };
 
@@ -47,6 +53,10 @@ impl ProjectIndex {
 
     pub fn is_referenced(&self, key: &str) -> bool {
         self.refs.iter().any(|reference| reference.key == key)
+    }
+
+    pub fn has_label(&self, key: &str) -> bool {
+        self.labels.iter().any(|label| label.key == key)
     }
 
     pub fn resolve_graphic(&self, graphic: &Graphic) -> Option<PathBuf> {
@@ -76,6 +86,8 @@ struct ProjectBuilder {
     refs: Vec<Ref>,
     graphics: Vec<Graphic>,
     graphics_paths: Vec<GraphicsPath>,
+    document_classes: Vec<DocumentClass>,
+    packages: Vec<PackageImport>,
     floats: Vec<FloatEnv>,
 }
 
@@ -94,6 +106,8 @@ impl ProjectBuilder {
         self.refs.extend(scan.refs);
         self.graphics.extend(scan.graphics);
         self.graphics_paths.extend(scan.graphics_paths);
+        self.document_classes.extend(scan.document_classes);
+        self.packages.extend(scan.packages);
         self.floats.extend(scan.floats);
         self.files.push(SourceFile {
             path: canonical.clone(),
@@ -119,6 +133,10 @@ impl ProjectBuilder {
             .sort_by(|left, right| left.location.file.cmp(&right.location.file));
         self.graphics_paths
             .sort_by(|left, right| left.location.file.cmp(&right.location.file));
+        self.document_classes
+            .sort_by(|left, right| left.location.file.cmp(&right.location.file));
+        self.packages
+            .sort_by(|left, right| left.location.file.cmp(&right.location.file));
         self.floats
             .sort_by(|left, right| left.location.file.cmp(&right.location.file));
 
@@ -129,6 +147,8 @@ impl ProjectBuilder {
             refs: self.refs,
             graphics: self.graphics,
             graphics_paths: self.graphics_paths,
+            document_classes: self.document_classes,
+            packages: self.packages,
             floats: self.floats,
         }
     }
@@ -150,11 +170,9 @@ fn infer_project_root(
         }
     }
 
-    if roots.is_empty() {
-        for file in discovered_files {
-            if let Some(parent) = file.parent() {
-                roots.push(canonicalize_existing(parent)?);
-            }
+    for file in discovered_files {
+        if let Some(parent) = file.parent() {
+            roots.push(canonicalize_existing(parent)?);
         }
     }
 
@@ -180,6 +198,10 @@ fn common_ancestor(left: PathBuf, right: PathBuf) -> PathBuf {
 }
 
 fn resolve_include_path(root: &Path, current_file: &Path, include: &Include) -> Option<PathBuf> {
+    if !is_tex_like_include(&include.raw_path) {
+        return None;
+    }
+
     let base = current_file.parent()?;
     let raw = Path::new(&include.raw_path);
     let candidate = if raw.is_absolute() {
@@ -188,16 +210,32 @@ fn resolve_include_path(root: &Path, current_file: &Path, include: &Include) -> 
         base.join(raw)
     };
 
-    let candidates = if candidate.extension().is_some() {
+    let mut candidates = if candidate.extension().is_some() {
         vec![candidate]
     } else {
         vec![candidate.clone(), candidate.with_extension("tex")]
     };
+    if !raw.is_absolute() {
+        let root_candidate = root.join(raw);
+        if root_candidate.extension().is_some() {
+            candidates.push(root_candidate);
+        } else {
+            candidates.push(root_candidate.clone());
+            candidates.push(root_candidate.with_extension("tex"));
+        }
+    }
 
     candidates.into_iter().find_map(|candidate| {
         let canonical = candidate.canonicalize().ok()?;
-        canonical.starts_with(root).then_some(canonical)
+        (canonical.is_file() && canonical.starts_with(root)).then_some(canonical)
     })
+}
+
+fn is_tex_like_include(raw_path: &str) -> bool {
+    Path::new(raw_path.trim())
+        .extension()
+        .and_then(|extension| extension.to_str())
+        .is_none_or(|extension| extension.eq_ignore_ascii_case("tex"))
 }
 
 fn resolve_graphic_path(
@@ -209,6 +247,9 @@ fn resolve_graphic_path(
     graphic_candidate_paths(root, current_file, raw_path, graphics_paths)?
         .into_iter()
         .find_map(|candidate| {
+            if find_case_mismatch(root, &candidate).is_some() {
+                return None;
+            }
             let canonical = candidate.canonicalize().ok()?;
             canonical.starts_with(root).then_some(canonical)
         })
@@ -253,10 +294,6 @@ fn graphic_candidate_paths(
 }
 
 fn find_case_mismatch(root: &Path, candidate: &Path) -> Option<PathBuf> {
-    if candidate.exists() {
-        return None;
-    }
-
     let parent = candidate.parent()?;
     let target_name = candidate.file_name()?.to_str()?;
 
@@ -265,7 +302,11 @@ fn find_case_mismatch(root: &Path, candidate: &Path) -> Option<PathBuf> {
         let file_name = entry.file_name();
         let file_name = file_name.to_str()?;
 
-        if file_name != target_name && file_name.eq_ignore_ascii_case(target_name) {
+        if file_name == target_name {
+            return None;
+        }
+
+        if file_name.eq_ignore_ascii_case(target_name) {
             let canonical = entry.path().canonicalize().ok()?;
             if canonical.starts_with(root) {
                 return Some(canonical);
@@ -355,6 +396,68 @@ mod tests {
         assert_eq!(index.files.len(), 3);
         assert!(index.labels.iter().any(|label| label.key == "sec:method"));
         assert!(index.is_referenced("sec:method"));
+        assert!(index.has_label("sec:method"));
+        assert!(!index.has_label("sec:missing"));
+    }
+
+    #[test]
+    fn ignores_explicit_non_tex_inputs() {
+        let dir = temp_project("pgf-input");
+        let main = dir.join("paper.tex");
+        let plot = dir.join("plot.pgf");
+        write(&main, "\\input{plot.pgf}\n");
+        write(&plot, "\\label{fig:plot}\n");
+
+        let index = ProjectIndex::build(std::slice::from_ref(&main), std::slice::from_ref(&main))
+            .expect("project should index");
+
+        assert_eq!(index.files.len(), 1);
+        assert!(index.labels.is_empty());
+    }
+
+    #[test]
+    fn ignores_inputs_that_resolve_to_directories() {
+        let dir = temp_project("directory-input");
+        let main = dir.join("paper.tex");
+        fs::create_dir_all(dir.join("sections")).expect("failed to create input directory");
+        write(&main, "\\input sections\n");
+
+        let index = ProjectIndex::build(std::slice::from_ref(&main), std::slice::from_ref(&main))
+            .expect("project should index");
+
+        assert_eq!(index.files.len(), 1);
+    }
+
+    #[test]
+    fn follows_bare_input_paths() {
+        let dir = temp_project("bare-input");
+        let main = dir.join("paper.tex");
+        let method = dir.join("sections/method.tex");
+        write(&main, "\\input sections/method\n");
+        write(&method, "\\label{sec:method}\n");
+
+        let index = ProjectIndex::build(std::slice::from_ref(&main), std::slice::from_ref(&main))
+            .expect("project should index");
+
+        assert_eq!(index.files.len(), 2);
+        assert!(index.labels.iter().any(|label| label.key == "sec:method"));
+    }
+
+    #[test]
+    fn follows_root_relative_inputs_from_nested_files() {
+        let dir = temp_project("root-relative-input");
+        let main = dir.join("paper.tex");
+        let supp = dir.join("src/supp/supp.tex");
+        let method = dir.join("src/supp/method.tex");
+        write(&main, "\\input src/supp/supp\n");
+        write(&supp, "\\input src/supp/method\n");
+        write(&method, "\\label{sec:method}\n");
+
+        let index = ProjectIndex::build(std::slice::from_ref(&main), std::slice::from_ref(&main))
+            .expect("project should index");
+
+        assert_eq!(index.files.len(), 3);
+        assert!(index.labels.iter().any(|label| label.key == "sec:method"));
     }
 
     #[test]
@@ -398,9 +501,7 @@ mod tests {
 
         assert_eq!(index.graphics.len(), 1);
         assert_eq!(
-            index
-                .resolve_graphic(&index.graphics[0])
-                .and_then(|path| path.canonicalize().ok()),
+            index.resolve_graphic(&index.graphics[0]),
             asset.canonicalize().ok()
         );
     }
@@ -422,9 +523,7 @@ mod tests {
         assert_eq!(index.graphics_paths.len(), 1);
         assert_eq!(index.graphics.len(), 1);
         assert_eq!(
-            index
-                .resolve_graphic(&index.graphics[0])
-                .and_then(|path| path.canonicalize().ok()),
+            index.resolve_graphic(&index.graphics[0]),
             asset.canonicalize().ok()
         );
     }
@@ -444,19 +543,36 @@ mod tests {
             .expect("project should index");
 
         assert_eq!(index.graphics.len(), 1);
-        let resolved = index
-            .resolve_graphic(&index.graphics[0])
-            .and_then(|path| path.canonicalize().ok());
-        let asset_canonical = asset.canonicalize().ok();
-        if resolved.is_none() {
-            assert_eq!(
-                index
-                    .find_graphic_case_mismatch(&index.graphics[0])
-                    .and_then(|path| path.canonicalize().ok()),
-                asset_canonical
-            );
-        } else {
-            assert_eq!(resolved, asset_canonical);
-        }
+        assert_eq!(index.resolve_graphic(&index.graphics[0]), None);
+        assert_eq!(
+            index.find_graphic_case_mismatch(&index.graphics[0]),
+            asset.canonicalize().ok()
+        );
+    }
+
+    #[test]
+    fn indexes_document_classes_and_packages_across_project() {
+        let dir = temp_project("package-index");
+        let main = dir.join("paper.tex");
+        let macros = dir.join("macros.tex");
+        write(
+            &main,
+            "\\documentclass[sigconf]{acmart}\n\\usepackage{graphicx,xcolor}\n\\input{macros}\n",
+        );
+        write(&macros, "\\RequirePackage{amsmath}\n");
+
+        let index = ProjectIndex::build(std::slice::from_ref(&main), std::slice::from_ref(&main))
+            .expect("project should index");
+
+        assert_eq!(index.document_classes.len(), 1);
+        assert_eq!(index.document_classes[0].name, "acmart");
+        assert_eq!(index.document_classes[0].options, vec!["sigconf"]);
+        let mut packages: Vec<_> = index
+            .packages
+            .iter()
+            .map(|package| package.name.as_str())
+            .collect();
+        packages.sort();
+        assert_eq!(packages, vec!["amsmath", "graphicx", "xcolor"]);
     }
 }

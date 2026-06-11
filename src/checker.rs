@@ -2,7 +2,7 @@ use std::fmt;
 use std::io;
 use std::path::PathBuf;
 
-use crate::baseline::{filter_baseline, load_baseline, update_baseline};
+use crate::baseline::{Baseline, BaselineError};
 use crate::config::LinterConfig;
 use crate::diagnostic::{Diagnostic, Severity};
 use crate::discovery::discover_tex_files;
@@ -11,7 +11,7 @@ use crate::project_graph::ProjectGraph;
 use crate::rule_policy;
 use crate::rules::citations::{check_project, explicit_bib_files, SourceFile};
 use crate::rules::{all_graph_project_rules, all_project_rules, all_rules};
-use crate::suppressions::{apply_suppressions, SuppressionIndex};
+use crate::suppressions::Suppressions;
 
 #[derive(Debug, Clone)]
 pub struct CheckOptions {
@@ -21,7 +21,6 @@ pub struct CheckOptions {
     pub strict: bool,
     pub all_tex: bool,
     pub baseline: Option<PathBuf>,
-    pub update_baseline: Option<PathBuf>,
     pub config: LinterConfig,
 }
 
@@ -34,7 +33,6 @@ impl Default for CheckOptions {
             strict: false,
             all_tex: false,
             baseline: None,
-            update_baseline: None,
             config: LinterConfig::default(),
         }
     }
@@ -68,6 +66,10 @@ pub enum ToolError {
         path: Option<PathBuf>,
         source: io::Error,
     },
+    Baseline {
+        path: PathBuf,
+        source: BaselineError,
+    },
 }
 
 impl fmt::Display for ToolError {
@@ -78,6 +80,13 @@ impl fmt::Display for ToolError {
                 source,
             } => write!(formatter, "{}: {}", path.display(), source),
             ToolError::Io { path: None, source } => write!(formatter, "{source}"),
+            ToolError::Baseline { path, source } => {
+                write!(
+                    formatter,
+                    "{}: failed to read baseline: {source}",
+                    path.display()
+                )
+            }
         }
     }
 }
@@ -106,22 +115,15 @@ pub fn run_check(options: &CheckOptions) -> Result<CheckResult, ToolError> {
     };
 
     let mut sources = Vec::new();
-    let suppression_files: Vec<(PathBuf, String)> = project
-        .as_ref()
-        .map(|project| {
-            project
-                .files
-                .iter()
-                .map(|file| (file.path.clone(), file.content.clone()))
-                .collect()
-        })
-        .unwrap_or_default();
-    let suppression_index = SuppressionIndex::from_files(&suppression_files);
 
     if let Some(project) = &project {
         for file in &project.files {
             for rule in all_rules() {
-                if !code_is_enabled(rule.code(), options) {
+                if !rule_is_enabled(
+                    rule.code(),
+                    rule.strict_only(),
+                    options,
+                ) {
                     continue;
                 }
 
@@ -135,7 +137,11 @@ pub fn run_check(options: &CheckOptions) -> Result<CheckResult, ToolError> {
         }
 
         for rule in all_project_rules() {
-            if !code_is_enabled(rule.code(), options) {
+            if !rule_is_enabled(
+                rule.code(),
+                rule.strict_only(),
+                options,
+            ) {
                 continue;
             }
 
@@ -155,7 +161,7 @@ pub fn run_check(options: &CheckOptions) -> Result<CheckResult, ToolError> {
             .map_err(|source| ToolError::Io { path: None, source })?;
         for graph in graphs {
             for rule in all_graph_project_rules() {
-                if !code_is_enabled(rule.code(), options) {
+                if !rule_is_enabled(rule.code(), false, options) {
                     continue;
                 }
                 diagnostics.extend(rule.check_graph(&graph));
@@ -165,6 +171,19 @@ pub fn run_check(options: &CheckOptions) -> Result<CheckResult, ToolError> {
 
     diagnostics.retain(|diagnostic| code_is_enabled(diagnostic.code, options));
 
+    if let Some(project) = &project {
+        let suppressions = Suppressions::from_sources(&project.files);
+        diagnostics.retain(|diagnostic| !suppressions.suppresses(diagnostic));
+
+        if let Some(path) = &options.baseline {
+            let baseline = Baseline::read(path).map_err(|source| ToolError::Baseline {
+                path: path.clone(),
+                source,
+            })?;
+            diagnostics.retain(|diagnostic| !baseline.contains(diagnostic, &project.root));
+        }
+    }
+
     if options.strict {
         for diagnostic in &mut diagnostics {
             if diagnostic.severity == Severity::Warning
@@ -173,21 +192,6 @@ pub fn run_check(options: &CheckOptions) -> Result<CheckResult, ToolError> {
                 diagnostic.severity = Severity::Error;
             }
         }
-    }
-
-    diagnostics = apply_suppressions(diagnostics, &suppression_index);
-
-    if let Some(path) = &options.baseline {
-        let baseline = load_baseline(path)
-            .map_err(|source| ToolError::Io { path: Some(path.clone()), source })?;
-        diagnostics = filter_baseline(diagnostics, &baseline);
-    }
-
-    if let Some(path) = &options.update_baseline {
-        update_baseline(path, &diagnostics).map_err(|source| ToolError::Io {
-            path: Some(path.clone()),
-            source,
-        })?;
     }
 
     diagnostics.sort_by(|left, right| {
@@ -230,6 +234,14 @@ fn code_is_enabled(code: &str, options: &CheckOptions) -> bool {
     rule_policy::code_is_enabled(code, &options.select, &options.ignore, options.strict)
 }
 
+fn rule_is_enabled(code: &str, strict_only: bool, options: &CheckOptions) -> bool {
+    if !code_is_enabled(code, options) {
+        return false;
+    }
+
+    !strict_only || options.strict || !options.select.is_empty()
+}
+
 fn family_may_be_enabled(family: &str, options: &CheckOptions) -> bool {
     let selected = options.select.is_empty()
         || options
@@ -247,7 +259,7 @@ fn family_may_be_enabled(family: &str, options: &CheckOptions) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::{code_is_enabled, CheckOptions};
+    use super::{code_is_enabled, rule_is_enabled, CheckOptions};
 
     #[test]
     fn select_defaults_to_all_default_rules() {
@@ -275,5 +287,21 @@ mod tests {
             ..CheckOptions::default()
         };
         assert!(!code_is_enabled("WS001", &options));
+    }
+
+    #[test]
+    fn strict_only_rules_require_strict_or_explicit_select() {
+        let options = CheckOptions::default();
+        assert!(!rule_is_enabled("CAP002", true, &options));
+        let selected = CheckOptions {
+            select: vec![String::from("CAP002")],
+            ..CheckOptions::default()
+        };
+        assert!(rule_is_enabled("CAP002", true, &selected));
+        let strict = CheckOptions {
+            strict: true,
+            ..CheckOptions::default()
+        };
+        assert!(rule_is_enabled("CAP002", true, &strict));
     }
 }

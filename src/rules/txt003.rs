@@ -17,6 +17,10 @@ impl Rule for LongSentence {
         "long sentence"
     }
 
+    fn strict_only(&self) -> bool {
+        true
+    }
+
     fn check_file(&self, path: &Path, content: &str) -> Vec<Diagnostic> {
         if path.extension().is_some_and(|ext| ext.eq_ignore_ascii_case("bbl")) {
             return Vec::new();

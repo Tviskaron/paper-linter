@@ -50,11 +50,11 @@ checked 1 file(s), 0 error(s), 1 warning(s)
 ```
 
 Current implementation status: the core CLI and rule pipeline are in place, with
-`CIT001`-`CIT006` citation checks and the first Structure & Formatting rules
+`CIT001`-`CIT009` citation checks and the first Structure & Formatting rules
 implemented:
 
-- `CIT001`-`CIT006`: citation and bibliography consistency checks, with `.bbl`
-  fallback for arXiv sources that omit `.bib` files.
+- `CIT001`-`CIT009`: citation and bibliography consistency/style checks, with
+  `.bbl` fallback for arXiv sources that omit `.bib` files.
 - `FMT001`: missing final newline.
 - `FMT002`: repeated blank lines.
 - `ENV001`: environment begin/end mismatch.

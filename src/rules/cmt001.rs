@@ -25,6 +25,10 @@ impl Rule for EditorialComment {
         "editorial comment"
     }
 
+    fn strict_only(&self) -> bool {
+        true
+    }
+
     fn check_file(&self, path: &Path, content: &str) -> Vec<Diagnostic> {
         content
             .lines()

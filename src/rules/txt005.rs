@@ -39,6 +39,10 @@ impl Rule for PassiveVoice {
         "passive voice"
     }
 
+    fn strict_only(&self) -> bool {
+        true
+    }
+
     fn check_file(&self, path: &Path, content: &str) -> Vec<Diagnostic> {
         prose_spans(content)
             .into_iter()

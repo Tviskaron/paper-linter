@@ -9,6 +9,7 @@ mod fig003;
 mod fig004;
 mod fig005;
 mod fig006;
+mod fig007;
 mod fmt001;
 mod fmt002;
 mod lat001;
@@ -126,12 +127,13 @@ static FIG003_RULE: fig003::AssetCaseMismatch = fig003::AssetCaseMismatch;
 static FIG004_RULE: fig004::MissingFigureLabel = fig004::MissingFigureLabel;
 static FIG005_RULE: fig005::UnsafeGraphicPath = fig005::UnsafeGraphicPath;
 static FIG006_RULE: fig006::ImageFormatPolicy = fig006::ImageFormatPolicy;
+static FIG007_RULE: fig007::ImageHeaderMetadata = fig007::ImageHeaderMetadata;
 static TAB001_RULE: tab001::OrphanTable = tab001::OrphanTable;
 static TAB002_RULE: tab002::MissingTableLabel = tab002::MissingTableLabel;
 static LAT001_RULE: lat001::LegacyLatex = lat001::LegacyLatex;
 static LBL001_RULE: lbl001::UnusedLabel = lbl001::UnusedLabel;
 static REF001_RULE: ref001::MissingReferenceTarget = ref001::MissingReferenceTarget;
-static PROJECT_RULES: [&dyn ProjectRule; 13] = [
+static PROJECT_RULES: [&dyn ProjectRule; 14] = [
     &FIG001_RULE,
     &CAP001_RULE,
     &CAP002_RULE,
@@ -140,6 +142,7 @@ static PROJECT_RULES: [&dyn ProjectRule; 13] = [
     &FIG004_RULE,
     &FIG005_RULE,
     &FIG006_RULE,
+    &FIG007_RULE,
     &TAB001_RULE,
     &TAB002_RULE,
     &LAT001_RULE,
@@ -176,7 +179,7 @@ pub struct RuleInfo {
     pub fix: &'static str,
 }
 
-static RULE_INFOS: [RuleInfo; 50] = [
+static RULE_INFOS: [RuleInfo; 51] = [
     RuleInfo {
         code: "CMT001",
         name: "editorial comment",
@@ -344,6 +347,14 @@ static RULE_INFOS: [RuleInfo; 50] = [
         summary: "A figure uses an explicit image extension outside the supported format set.",
         why: "Unsupported or unusual image formats often fail in CI, TeX engines, arXiv, or camera-ready packaging.",
         fix: "Use pdf, png, jpg, jpeg, eps, or svg.",
+    },
+    RuleInfo {
+        code: "FIG007",
+        name: "image header metadata",
+        default_severity: Severity::Warning,
+        summary: "A raster figure image has suspiciously small pixel dimensions.",
+        why: "Very small raster figures often render blurry in camera-ready PDFs and can indicate a placeholder asset.",
+        fix: "Use a higher-resolution source image or a vector format.",
     },
     RuleInfo {
         code: "FMT001",
@@ -616,7 +627,7 @@ mod tests {
             codes,
             vec![
                 "FIG001", "CAP001", "CAP002", "FIG002", "FIG003", "FIG004", "FIG005", "FIG006",
-                "TAB001", "TAB002", "LAT001", "REF001", "LBL001"
+                "FIG007", "TAB001", "TAB002", "LAT001", "REF001", "LBL001"
             ]
         );
     }
@@ -652,11 +663,11 @@ mod tests {
             vec![
                 "CMT001", "CAP001", "CAP002", "BIB001", "CIT001", "CIT002", "CIT003", "CIT004",
                 "CIT005", "CIT006", "CIT007", "CIT008", "CIT009", "CIT010", "ENV001", "FIG001",
-                "FIG002", "FIG003", "FIG004", "FIG005", "FIG006", "FMT001", "FMT002", "LBL001",
-                "LAT001", "LAT002", "MTH001", "MTH002", "MTH003", "PRJ001", "PRJ002", "PRJ003",
-                "PRJ004", "REF001", "SEC001", "SEC002", "SEC003", "SEC004", "SEC005", "SEC006",
-                "TAB001", "TAB002", "TEX001", "TEX002", "TXT001", "TXT002", "TXT003", "TXT004",
-                "TXT005", "WS001"
+                "FIG002", "FIG003", "FIG004", "FIG005", "FIG006", "FIG007", "FMT001", "FMT002",
+                "LBL001", "LAT001", "LAT002", "MTH001", "MTH002", "MTH003", "PRJ001", "PRJ002",
+                "PRJ003", "PRJ004", "REF001", "SEC001", "SEC002", "SEC003", "SEC004", "SEC005",
+                "SEC006", "TAB001", "TAB002", "TEX001", "TEX002", "TXT001", "TXT002", "TXT003",
+                "TXT004", "TXT005", "WS001"
             ]
         );
     }

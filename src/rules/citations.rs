@@ -71,6 +71,13 @@ struct BibEntry {
     column: usize,
 }
 
+#[derive(Debug, Clone)]
+struct BibSource {
+    path: PathBuf,
+    is_explicit: bool,
+    size_bytes: Option<u64>,
+}
+
 pub fn check_project(
     tex_files: &[SourceFile],
     explicit_bib_files: &[PathBuf],
@@ -94,7 +101,10 @@ pub fn check_project(
     diagnostics.extend(find_collapsible_citations(&citations, tex_files));
     diagnostics.extend(find_mixed_citation_command_families(&citations));
 
-    let bib_paths = bibliography_paths(&declarations, explicit_bib_files);
+    let bib_sources = ordered_bib_sources(
+        bibliography_paths(&declarations, explicit_bib_files),
+        explicit_bib_files,
+    );
     let mut bbl_keys = HashSet::new();
     let source_files: Vec<_> = tex_files.iter().map(|file| file.path.clone()).collect();
 
@@ -117,35 +127,70 @@ pub fn check_project(
         active_bibliography_keys(&cited_keys, &bbl_keys, &source_bibitem_keys, has_nocite_all);
 
     let mut entries = Vec::new();
-    for bib_path in bib_paths {
-        let is_explicit_bib = explicit_bib_files.iter().any(|path| path == &bib_path);
-        if should_skip_large_bib_with_bbl(&bib_path, is_explicit_bib, has_nocite_all, &bbl_keys) {
+    let mut resolved_active_keys = HashSet::new();
+    for bib_source in bib_sources {
+        let bib_path = &bib_source.path;
+        if should_skip_large_bib_with_bbl(
+            bib_path,
+            bib_source.is_explicit,
+            has_nocite_all,
+            &bbl_keys,
+        ) {
+            continue;
+        }
+        if should_skip_resolved_large_bib(
+            &bib_source,
+            active_key_filter.as_ref(),
+            &resolved_active_keys,
+            has_nocite_all,
+        ) {
             continue;
         }
 
-        match fs::read_to_string(&bib_path) {
-            Ok(content) => entries.extend(parse_bib_entries_with_filter(
-                &bib_path,
-                &content,
-                active_key_filter.as_ref(),
-            )),
-            Err(error) if explicit_bib_files.iter().any(|path| path == &bib_path) => {
+        match fs::read_to_string(bib_path) {
+            Ok(content) => {
+                let parsed =
+                    parse_bib_entries_with_filter(bib_path, &content, active_key_filter.as_ref());
+                resolved_active_keys.extend(
+                    parsed
+                        .iter()
+                        .filter(|entry| {
+                            active_key_filter
+                                .as_ref()
+                                .is_some_and(|keys| keys.contains(entry.key.as_str()))
+                        })
+                        .map(|entry| entry.key.clone()),
+                );
+                entries.extend(parsed);
+            }
+            Err(error) if explicit_bib_files.iter().any(|path| path == bib_path) => {
                 return Err(error);
             }
             Err(_) => {
                 if let Some(declaration) = declarations
                     .iter()
-                    .find(|declaration| resolve_bib_path(declaration) == bib_path)
+                    .find(|declaration| resolve_bib_path(declaration) == *bib_path)
                 {
                     let fallback_keys = parse_bbl_fallback_keys(declaration, &source_files);
                     if let Some((alternate_path, content)) =
                         read_first_existing_bib(declaration, &source_files)
                     {
-                        entries.extend(parse_bib_entries_with_filter(
+                        let parsed = parse_bib_entries_with_filter(
                             &alternate_path,
                             &content,
                             active_key_filter.as_ref(),
-                        ));
+                        );
+                        resolved_active_keys.extend(
+                            parsed
+                                .iter()
+                                .filter(|entry| {
+                                    active_key_filter
+                                        .as_ref()
+                                        .is_some_and(|keys| keys.contains(entry.key.as_str()))
+                                })
+                                .map(|entry| entry.key.clone()),
+                        );
+                        entries.extend(parsed);
                         bbl_keys.extend(fallback_keys);
                         continue;
                     }
@@ -253,6 +298,50 @@ fn should_skip_large_bib_with_bbl(
     fs::metadata(path)
         .map(|metadata| metadata.len() > LARGE_BIB_FAST_PATH_BYTES)
         .unwrap_or(false)
+}
+
+fn ordered_bib_sources(paths: Vec<PathBuf>, explicit_bib_files: &[PathBuf]) -> Vec<BibSource> {
+    let mut sources = paths
+        .into_iter()
+        .enumerate()
+        .map(|(index, path)| {
+            let size_bytes = fs::metadata(&path).ok().map(|metadata| metadata.len());
+            let is_explicit = explicit_bib_files.iter().any(|explicit| explicit == &path);
+            (
+                index,
+                BibSource {
+                    path,
+                    is_explicit,
+                    size_bytes,
+                },
+            )
+        })
+        .collect::<Vec<_>>();
+
+    sources.sort_by_key(|(index, source)| (source.size_bytes.unwrap_or(u64::MAX), *index));
+    sources.into_iter().map(|(_, source)| source).collect()
+}
+
+fn should_skip_resolved_large_bib(
+    source: &BibSource,
+    active_keys: Option<&HashSet<String>>,
+    resolved_active_keys: &HashSet<String>,
+    has_nocite_all: bool,
+) -> bool {
+    if source.is_explicit || has_nocite_all {
+        return false;
+    }
+    if source
+        .size_bytes
+        .is_none_or(|size| size <= LARGE_BIB_FAST_PATH_BYTES)
+    {
+        return false;
+    }
+
+    let Some(active_keys) = active_keys else {
+        return false;
+    };
+    !active_keys.is_empty() && active_keys.is_subset(resolved_active_keys)
 }
 
 fn active_bibliography_keys(
@@ -1010,11 +1099,12 @@ fn is_commented_position(content: &str, byte_index: usize) -> bool {
 #[cfg(test)]
 mod tests {
     use std::collections::HashSet;
-    use std::path::Path;
+    use std::path::{Path, PathBuf};
 
     use super::{
         bibtex::parse_bib_entries, find_duplicate_keys, is_valid_arxiv_id, is_valid_doi,
         is_valid_url, missing_required_fields, scoped_bibliography_entries,
+        should_skip_resolved_large_bib, BibSource, LARGE_BIB_FAST_PATH_BYTES,
     };
 
     #[test]
@@ -1081,5 +1171,41 @@ mod tests {
         assert!(is_valid_arxiv_id("2401.00001v2"));
         assert!(is_valid_arxiv_id("hep-th/9901001"));
         assert!(!is_valid_arxiv_id("bad-id"));
+    }
+
+    #[test]
+    fn skips_large_bib_after_active_keys_are_resolved() {
+        let source = BibSource {
+            path: PathBuf::from("huge.bib"),
+            is_explicit: false,
+            size_bytes: Some(LARGE_BIB_FAST_PATH_BYTES + 1),
+        };
+        let active_keys = HashSet::from(["alpha".to_string(), "beta".to_string()]);
+        let resolved_active_keys = HashSet::from(["alpha".to_string(), "beta".to_string()]);
+
+        assert!(should_skip_resolved_large_bib(
+            &source,
+            Some(&active_keys),
+            &resolved_active_keys,
+            false,
+        ));
+    }
+
+    #[test]
+    fn does_not_skip_explicit_large_bib_after_active_keys_are_resolved() {
+        let source = BibSource {
+            path: PathBuf::from("huge.bib"),
+            is_explicit: true,
+            size_bytes: Some(LARGE_BIB_FAST_PATH_BYTES + 1),
+        };
+        let active_keys = HashSet::from(["alpha".to_string()]);
+        let resolved_active_keys = HashSet::from(["alpha".to_string()]);
+
+        assert!(!should_skip_resolved_large_bib(
+            &source,
+            Some(&active_keys),
+            &resolved_active_keys,
+            false,
+        ));
     }
 }

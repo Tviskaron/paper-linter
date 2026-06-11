@@ -53,8 +53,10 @@ the first Structure & Formatting rules implemented:
 
 - `FMT001`: missing final newline.
 - `FMT002`: repeated blank lines.
+- `ENV001`: environment begin/end mismatch.
 - `SEC001`: skipped section hierarchy level.
 - `SEC002`: empty section.
+- `TEX001`: missing non-breaking space before references or citations.
 - `TXT001`: placeholder text.
 - `TXT002`: repeated word.
 - `WS001`: trailing whitespace.

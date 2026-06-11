@@ -63,4 +63,5 @@ jobs:
       - name: Install from local checkout
         run: cargo install --path . --locked --root "$RUNNER_TEMP/paper-linter-install"
       - name: Run installed binary
-        run: "$RUNNER_TEMP/paper-linter-install/bin/paper-linter" --help
+        run: |
+          "$RUNNER_TEMP/paper-linter-install/bin/paper-linter" --help

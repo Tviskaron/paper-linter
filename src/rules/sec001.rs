@@ -24,6 +24,10 @@ impl Rule for SkippedSectionLevel {
                 continue;
             };
 
+            if heading.starred {
+                continue;
+            }
+
             if let Some(level) = previous_level {
                 if heading.level > level + 1 {
                     diagnostics.push(Diagnostic::new(
@@ -74,6 +78,14 @@ mod tests {
     fn does_not_warn_on_file_starting_with_subsection() {
         let diagnostics =
             SkippedSectionLevel.check_file(Path::new("section.tex"), "\\subsection{Setup}\n");
+
+        assert!(diagnostics.is_empty());
+    }
+
+    #[test]
+    fn ignores_starred_service_headings() {
+        let content = "\\section{Conclusion}\n\\subsubsection*{Acknowledgements}\n";
+        let diagnostics = SkippedSectionLevel.check_file(Path::new("paper.tex"), content);
 
         assert!(diagnostics.is_empty());
     }

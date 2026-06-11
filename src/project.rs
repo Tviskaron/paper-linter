@@ -168,6 +168,13 @@ fn resolve_include_path(root: &Path, current_file: &Path, include: &Include) -> 
     };
 
     let candidates = if candidate.extension().is_some() {
+        if candidate
+            .extension()
+            .and_then(|extension| extension.to_str())
+            != Some("tex")
+        {
+            return None;
+        }
         vec![candidate]
     } else {
         vec![candidate.clone(), candidate.with_extension("tex")]
@@ -251,6 +258,25 @@ mod tests {
         assert_eq!(index.files.len(), 3);
         assert!(index.labels.iter().any(|label| label.key == "sec:method"));
         assert!(index.is_referenced("sec:method"));
+    }
+
+    #[test]
+    fn ignores_non_tex_input_files() {
+        let dir = temp_project("non-tex-input");
+        let main = dir.join("paper.tex");
+        let plot = dir.join("figures/plot.pgf");
+        write(&main, "\\input{figures/plot.pgf}\n\\label{sec:main}\n");
+        write(&plot, "\\label{fig:plot-data}\n");
+
+        let index = ProjectIndex::build(std::slice::from_ref(&main), std::slice::from_ref(&main))
+            .expect("project should index");
+
+        assert_eq!(index.files.len(), 1);
+        assert!(index.labels.iter().any(|label| label.key == "sec:main"));
+        assert!(!index
+            .labels
+            .iter()
+            .any(|label| label.key == "fig:plot-data"));
     }
 
     #[test]

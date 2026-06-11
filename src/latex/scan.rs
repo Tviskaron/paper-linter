@@ -94,6 +94,13 @@ pub struct Include {
 }
 
 #[derive(Debug, Clone, Deserialize, PartialEq, Eq, Serialize)]
+pub struct BibliographyDecl {
+    pub raw_path: String,
+    pub command: String,
+    pub location: SourceLocation,
+}
+
+#[derive(Debug, Clone, Deserialize, PartialEq, Eq, Serialize)]
 pub struct DocumentClass {
     pub name: String,
     pub options: Vec<String>,
@@ -125,6 +132,7 @@ pub struct ScanResult {
     pub graphics: Vec<Graphic>,
     pub graphics_paths: Vec<GraphicsPath>,
     pub includes: Vec<Include>,
+    pub bibliographies: Vec<BibliographyDecl>,
     pub document_classes: Vec<DocumentClass>,
     pub packages: Vec<PackageImport>,
     pub floats: Vec<FloatEnv>,
@@ -312,6 +320,23 @@ pub fn scan_latex(file: impl Into<PathBuf>, content: &str) -> ScanResult {
             "input" | "include" => {
                 if let Some((raw_path, end)) = parse_include_arg(content, after_command) {
                     result.includes.push(Include { raw_path, location });
+                    index = end;
+                } else {
+                    index = after_command;
+                }
+            }
+            "bibliography" | "addbibresource" => {
+                let arg_start = skip_optional_args(content, after_command);
+                if let Some((paths, end)) = parse_required_arg(content, arg_start) {
+                    result
+                        .bibliographies
+                        .extend(split_comma_list(&paths).into_iter().map(|raw_path| {
+                            BibliographyDecl {
+                                raw_path,
+                                command: command.clone(),
+                                location: location.clone(),
+                            }
+                        }));
                     index = end;
                 } else {
                     index = after_command;
@@ -947,6 +972,23 @@ mod tests {
             .map(|include| include.raw_path.as_str())
             .collect();
         assert_eq!(paths, vec!["sections/method", "sections/results"]);
+    }
+
+    #[test]
+    fn records_bibliography_declarations() {
+        let scan = scan_latex(
+            Path::new("paper.tex"),
+            "\\bibliography{refs,more}\n\\addbibresource{bib/extra.bib}\n",
+        );
+
+        let paths: Vec<_> = scan
+            .bibliographies
+            .iter()
+            .map(|bibliography| bibliography.raw_path.as_str())
+            .collect();
+        assert_eq!(paths, vec!["refs", "more", "bib/extra.bib"]);
+        assert_eq!(scan.bibliographies[0].command, "bibliography");
+        assert_eq!(scan.bibliographies[2].command, "addbibresource");
     }
 
     #[test]

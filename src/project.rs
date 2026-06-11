@@ -6,12 +6,13 @@ use std::path::{Path, PathBuf};
 use serde::{Deserialize, Serialize};
 
 use crate::latex::scan::{
-    scan_latex, DocumentClass, FloatEnv, Graphic, GraphicsPath, Include, Label, PackageImport, Ref,
+    scan_latex, BibliographyDecl, DocumentClass, FloatEnv, Graphic, GraphicsPath, Include, Label,
+    PackageImport, Ref,
 };
 use crate::latex::significant::{mask_discarded_macro_arguments, mask_inactive_regions};
 
 const GRAPHICS_EXTENSIONS: [&str; 6] = ["pdf", "png", "jpg", "jpeg", "eps", "svg"];
-const PROJECT_INDEX_VERSION: u32 = 1;
+const PROJECT_INDEX_VERSION: u32 = 2;
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct SourceFile {
@@ -27,6 +28,7 @@ pub struct ProjectIndex {
     pub refs: Vec<Ref>,
     pub graphics: Vec<Graphic>,
     pub graphics_paths: Vec<GraphicsPath>,
+    pub bibliographies: Vec<BibliographyDecl>,
     pub document_classes: Vec<DocumentClass>,
     pub packages: Vec<PackageImport>,
     pub floats: Vec<FloatEnv>,
@@ -44,6 +46,7 @@ impl ProjectIndex {
             refs: Vec::new(),
             graphics: Vec::new(),
             graphics_paths: Vec::new(),
+            bibliographies: Vec::new(),
             document_classes: Vec::new(),
             packages: Vec::new(),
             floats: Vec::new(),
@@ -132,6 +135,7 @@ struct ProjectBuilder {
     refs: Vec<Ref>,
     graphics: Vec<Graphic>,
     graphics_paths: Vec<GraphicsPath>,
+    bibliographies: Vec<BibliographyDecl>,
     document_classes: Vec<DocumentClass>,
     packages: Vec<PackageImport>,
     floats: Vec<FloatEnv>,
@@ -186,6 +190,7 @@ impl ProjectBuilder {
         self.refs.extend(scan.refs);
         self.graphics.extend(scan.graphics);
         self.graphics_paths.extend(scan.graphics_paths);
+        self.bibliographies.extend(scan.bibliographies);
         self.document_classes.extend(scan.document_classes);
         self.packages.extend(scan.packages);
         self.floats.extend(scan.floats);
@@ -210,6 +215,8 @@ impl ProjectBuilder {
             .sort_by(|left, right| left.location.file.cmp(&right.location.file));
         self.graphics_paths
             .sort_by(|left, right| left.location.file.cmp(&right.location.file));
+        self.bibliographies
+            .sort_by(|left, right| left.location.file.cmp(&right.location.file));
         self.document_classes
             .sort_by(|left, right| left.location.file.cmp(&right.location.file));
         self.packages
@@ -224,6 +231,7 @@ impl ProjectBuilder {
             refs: self.refs,
             graphics: self.graphics,
             graphics_paths: self.graphics_paths,
+            bibliographies: self.bibliographies,
             document_classes: self.document_classes,
             packages: self.packages,
             floats: self.floats,

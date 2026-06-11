@@ -18,6 +18,7 @@ pub struct CheckOptions {
     pub strict: bool,
     pub all_tex: bool,
     pub baseline: Option<PathBuf>,
+    pub project_index: Option<PathBuf>,
 }
 
 #[derive(Debug, Clone)]
@@ -76,19 +77,13 @@ impl fmt::Display for ToolError {
 impl std::error::Error for ToolError {}
 
 pub fn run_check(options: &CheckOptions) -> Result<CheckResult, ToolError> {
-    let files = discover_tex_files(&options.paths, options.all_tex)
-        .map_err(|source| ToolError::Io { path: None, source })?;
     let mut diagnostics = Vec::new();
-
-    if files.is_empty() {
+    let Some(project) = load_project_index(options)? else {
         return Ok(CheckResult {
             diagnostics,
             files_checked: 0,
         });
-    }
-
-    let project = ProjectIndex::build(&options.paths, &files)
-        .map_err(|source| ToolError::Io { path: None, source })?;
+    };
     let mut sources = Vec::new();
 
     for file in &project.files {
@@ -155,6 +150,34 @@ pub fn run_check(options: &CheckOptions) -> Result<CheckResult, ToolError> {
         diagnostics,
         files_checked: project.files.len(),
     })
+}
+
+pub fn build_project_index(
+    paths: &[PathBuf],
+    all_tex: bool,
+) -> Result<Option<ProjectIndex>, ToolError> {
+    let files = discover_tex_files(paths, all_tex)
+        .map_err(|source| ToolError::Io { path: None, source })?;
+    if files.is_empty() {
+        return Ok(None);
+    }
+
+    ProjectIndex::build(paths, &files)
+        .map(Some)
+        .map_err(|source| ToolError::Io { path: None, source })
+}
+
+fn load_project_index(options: &CheckOptions) -> Result<Option<ProjectIndex>, ToolError> {
+    if let Some(path) = &options.project_index {
+        return ProjectIndex::read(path)
+            .map(Some)
+            .map_err(|source| ToolError::Io {
+                path: Some(path.clone()),
+                source,
+            });
+    }
+
+    build_project_index(&options.paths, options.all_tex)
 }
 
 fn code_is_enabled(code: &str, select: &[String], ignore: &[String]) -> bool {

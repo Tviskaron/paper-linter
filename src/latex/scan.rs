@@ -1,6 +1,8 @@
 use std::path::PathBuf;
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+use serde::{Deserialize, Serialize};
+
+#[derive(Debug, Clone, Deserialize, PartialEq, Eq, Serialize)]
 pub struct SourceLocation {
     pub file: PathBuf,
     pub line: usize,
@@ -17,7 +19,7 @@ impl SourceLocation {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Deserialize, PartialEq, Eq, Serialize)]
 pub enum FloatKind {
     Figure,
     Table,
@@ -32,7 +34,7 @@ impl FloatKind {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Deserialize, PartialEq, Eq, Serialize)]
 pub enum LabelKind {
     Figure,
     Table,
@@ -49,33 +51,33 @@ impl From<Option<FloatKind>> for LabelKind {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, Deserialize, PartialEq, Eq, Serialize)]
 pub struct Label {
     pub key: String,
     pub kind: LabelKind,
     pub location: SourceLocation,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, Deserialize, PartialEq, Eq, Serialize)]
 pub struct Ref {
     pub key: String,
     pub command: String,
     pub location: SourceLocation,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, Deserialize, PartialEq, Eq, Serialize)]
 pub struct Graphic {
     pub raw_path: String,
     pub location: SourceLocation,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, Deserialize, PartialEq, Eq, Serialize)]
 pub struct GraphicsPath {
     pub raw_path: String,
     pub location: SourceLocation,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, Deserialize, PartialEq, Eq, Serialize)]
 pub struct Caption {
     pub location: SourceLocation,
 }
@@ -86,7 +88,7 @@ pub struct Include {
     pub location: SourceLocation,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, Deserialize, PartialEq, Eq, Serialize)]
 pub struct FloatEnv {
     pub kind: FloatKind,
     pub env_name: String,
@@ -104,6 +106,7 @@ pub struct ScanResult {
     pub graphics_paths: Vec<GraphicsPath>,
     pub includes: Vec<Include>,
     pub floats: Vec<FloatEnv>,
+    pub document_end: Option<SourceLocation>,
 }
 
 #[derive(Debug, Clone)]
@@ -163,6 +166,11 @@ pub fn scan_latex(file: impl Into<PathBuf>, content: &str) -> ScanResult {
             }
             "end" => {
                 if let Some((env_name, end)) = parse_required_arg(content, after_command) {
+                    if env_name == "document" {
+                        result.document_end = Some(location);
+                        break;
+                    }
+
                     if let Some(position) = stack.iter().rposition(|env| env.env_name == env_name) {
                         let env = stack.remove(position);
                         finish_env(env, &mut result);
@@ -577,6 +585,19 @@ mod tests {
             .map(|include| include.raw_path.as_str())
             .collect();
         assert_eq!(paths, vec!["sections/method", "sections/results"]);
+    }
+
+    #[test]
+    fn stops_scanning_at_document_end() {
+        let scan = scan_latex(
+            Path::new("paper.tex"),
+            "\\label{active}\n\\end{document}\n\\label{dead}\n\\input{dead}\n",
+        );
+
+        assert_eq!(scan.document_end.unwrap().line, 2);
+        assert_eq!(scan.labels.len(), 1);
+        assert_eq!(scan.labels[0].key, "active");
+        assert!(scan.includes.is_empty());
     }
 
     #[test]

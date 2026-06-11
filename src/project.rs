@@ -1,19 +1,23 @@
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
 
+use serde::{Deserialize, Serialize};
+
 use crate::latex::scan::{scan_latex, FloatEnv, Graphic, GraphicsPath, Include, Label, Ref};
+use crate::latex::significant::mask_discarded_macro_arguments;
 
 const GRAPHICS_EXTENSIONS: [&str; 6] = ["pdf", "png", "jpg", "jpeg", "eps", "svg"];
+const PROJECT_INDEX_VERSION: u32 = 1;
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct SourceFile {
     pub path: PathBuf,
     pub content: String,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct ProjectIndex {
     pub root: PathBuf,
     pub files: Vec<SourceFile>,
@@ -30,6 +34,7 @@ impl ProjectIndex {
         let mut builder = ProjectBuilder {
             root,
             seen: BTreeSet::new(),
+            document_ended: BTreeMap::new(),
             files: Vec::new(),
             labels: Vec::new(),
             refs: Vec::new(),
@@ -43,6 +48,35 @@ impl ProjectIndex {
         }
 
         Ok(builder.finish())
+    }
+
+    pub fn read(path: &Path) -> io::Result<Self> {
+        let content = fs::read_to_string(path)?;
+        let file: ProjectIndexFile = serde_json::from_str(&content).map_err(json_io_error)?;
+        if file.version != PROJECT_INDEX_VERSION {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!(
+                    "unsupported project index version {}; expected {}",
+                    file.version, PROJECT_INDEX_VERSION
+                ),
+            ));
+        }
+        Ok(file.project)
+    }
+
+    pub fn write(&self, path: &Path) -> io::Result<()> {
+        let content = serde_json::to_string_pretty(&ProjectIndexFile {
+            version: PROJECT_INDEX_VERSION,
+            package_version: env!("CARGO_PKG_VERSION").to_string(),
+            project: self.clone(),
+        })
+        .map_err(json_io_error)?;
+
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent)?;
+        }
+        fs::write(path, format!("{content}\n"))
     }
 
     pub fn is_referenced(&self, key: &str) -> bool {
@@ -72,9 +106,21 @@ impl ProjectIndex {
     }
 }
 
+#[derive(Debug, Clone, Deserialize, Serialize)]
+struct ProjectIndexFile {
+    version: u32,
+    package_version: String,
+    project: ProjectIndex,
+}
+
+fn json_io_error(error: serde_json::Error) -> io::Error {
+    io::Error::new(io::ErrorKind::InvalidData, error)
+}
+
 struct ProjectBuilder {
     root: PathBuf,
     seen: BTreeSet<PathBuf>,
+    document_ended: BTreeMap<PathBuf, bool>,
     files: Vec<SourceFile>,
     labels: Vec<Label>,
     refs: Vec<Ref>,
@@ -84,15 +130,48 @@ struct ProjectBuilder {
 }
 
 impl ProjectBuilder {
-    fn add_file(&mut self, path: &Path) -> io::Result<()> {
+    fn add_file(&mut self, path: &Path) -> io::Result<bool> {
         let canonical = canonicalize_existing(path)?;
-        if !canonical.starts_with(&self.root) || !self.seen.insert(canonical.clone()) {
-            return Ok(());
+        if !canonical.starts_with(&self.root) {
+            return Ok(false);
+        }
+        if !self.seen.insert(canonical.clone()) {
+            return Ok(self
+                .document_ended
+                .get(&canonical)
+                .copied()
+                .unwrap_or(false));
         }
 
         let content = fs::read_to_string(&canonical)?;
+        let content = mask_discarded_macro_arguments(&content);
         let scan = scan_latex(canonical.clone(), &content);
         let includes = scan.includes.clone();
+        let mut truncation_line = scan.document_end.as_ref().map(|location| location.line);
+
+        for include in includes {
+            if truncation_line.is_some_and(|line| include.location.line > line) {
+                break;
+            }
+
+            let Some(path) = resolve_include_path(&self.root, &canonical, &include) else {
+                continue;
+            };
+
+            if self.add_file(&path)? {
+                truncation_line = Some(
+                    truncation_line
+                        .map(|line| line.min(include.location.line))
+                        .unwrap_or(include.location.line),
+                );
+                break;
+            }
+        }
+
+        let content = truncation_line
+            .map(|line| truncate_after_line(&content, line))
+            .unwrap_or(content);
+        let scan = scan_latex(canonical.clone(), &content);
 
         self.labels.extend(scan.labels);
         self.refs.extend(scan.refs);
@@ -104,13 +183,10 @@ impl ProjectBuilder {
             content,
         });
 
-        for include in includes {
-            if let Some(path) = resolve_include_path(&self.root, &canonical, &include) {
-                self.add_file(&path)?;
-            }
-        }
+        let ended = truncation_line.is_some();
+        self.document_ended.insert(canonical, ended);
 
-        Ok(())
+        Ok(ended)
     }
 
     fn finish(mut self) -> ProjectIndex {
@@ -136,6 +212,16 @@ impl ProjectBuilder {
             floats: self.floats,
         }
     }
+}
+
+fn truncate_after_line(content: &str, line_number: usize) -> String {
+    for (line_index, (index, _)) in content.match_indices('\n').enumerate() {
+        if line_index + 1 == line_number {
+            return content[..index + 1].to_string();
+        }
+    }
+
+    content.to_string()
 }
 
 fn infer_project_root(
@@ -393,6 +479,55 @@ mod tests {
             .labels
             .iter()
             .any(|label| label.key == "fig:plot-data"));
+    }
+
+    #[test]
+    fn truncates_parent_after_input_that_ends_document() {
+        let dir = temp_project("input-ends-document");
+        let main = dir.join("paper.tex");
+        let supplement = dir.join("supplement.tex");
+        write(
+            &main,
+            "\\label{active}\n\\input{supplement}\n\\label{dead}\nLorem ipsum\n",
+        );
+        write(&supplement, "\\label{supplement}\n\\end{document}\n");
+
+        let index = ProjectIndex::build(std::slice::from_ref(&main), std::slice::from_ref(&main))
+            .expect("project should index");
+        let main_file = index
+            .files
+            .iter()
+            .find(|file| file.path == canonical(&main))
+            .expect("main file should be indexed");
+
+        assert!(index.has_label("active"));
+        assert!(index.has_label("supplement"));
+        assert!(!index.has_label("dead"));
+        assert!(!main_file.content.contains("Lorem ipsum"));
+    }
+
+    #[test]
+    fn masks_discarded_macro_arguments_before_indexing() {
+        let dir = temp_project("discarded-macro");
+        let main = dir.join("paper.tex");
+        write(
+            &main,
+            "\\documentclass{article}\n\\long\\def\\todel#1{\\relax}\n\\begin{document}\n\\label{active}\n\\todel{TODO\n\\label{dead}\n\\input{dead}}\n\\end{document}\n",
+        );
+        write(&dir.join("dead.tex"), "\\label{included-dead}\n");
+
+        let index = ProjectIndex::build(std::slice::from_ref(&main), std::slice::from_ref(&main))
+            .expect("project should index");
+        let main_file = index
+            .files
+            .iter()
+            .find(|file| file.path == canonical(&main))
+            .expect("main file should be indexed");
+
+        assert!(index.has_label("active"));
+        assert!(!index.has_label("dead"));
+        assert!(!index.has_label("included-dead"));
+        assert!(!main_file.content.contains("TODO"));
     }
 
     #[test]

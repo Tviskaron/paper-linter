@@ -15,6 +15,7 @@ mod ref001;
 mod sec001;
 mod sec002;
 mod sec003;
+mod sec004;
 mod tab001;
 mod tab002;
 mod tex001;
@@ -53,17 +54,19 @@ static FMT002_RULE: fmt002::RepeatedBlankLines = fmt002::RepeatedBlankLines;
 static SEC001_RULE: sec001::SkippedSectionLevel = sec001::SkippedSectionLevel;
 static SEC002_RULE: sec002::EmptySection = sec002::EmptySection;
 static SEC003_RULE: sec003::SingletonSubdivision = sec003::SingletonSubdivision;
+static SEC004_RULE: sec004::StackedHeadings = sec004::StackedHeadings;
 static TEX001_RULE: tex001::MissingNonBreakingSpace = tex001::MissingNonBreakingSpace;
 static TXT001_RULE: txt001::PlaceholderText = txt001::PlaceholderText;
 static TXT002_RULE: txt002::RepeatedWords = txt002::RepeatedWords;
 static WS001_RULE: ws001::TrailingWhitespace = ws001::TrailingWhitespace;
-static RULES: [&dyn Rule; 10] = [
+static RULES: [&dyn Rule; 11] = [
     &ENV001_RULE,
     &FMT001_RULE,
     &FMT002_RULE,
     &SEC001_RULE,
     &SEC002_RULE,
     &SEC003_RULE,
+    &SEC004_RULE,
     &TEX001_RULE,
     &TXT001_RULE,
     &TXT002_RULE,
@@ -115,7 +118,7 @@ pub struct RuleInfo {
     pub fix: &'static str,
 }
 
-static RULE_INFOS: [RuleInfo; 28] = [
+static RULE_INFOS: [RuleInfo; 29] = [
     RuleInfo {
         code: "CAP001",
         name: "caption missing",
@@ -293,6 +296,14 @@ static RULE_INFOS: [RuleInfo; 28] = [
         fix: "Merge the subdivision into the parent or add a peer subdivision.",
     },
     RuleInfo {
+        code: "SEC004",
+        name: "stacked headings",
+        default_severity: Severity::Warning,
+        summary: "Two section headings appear without meaningful text between them.",
+        why: "Stacked headings often indicate an outline placeholder or a section that should be flattened.",
+        fix: "Add introductory text between the headings or remove the extra heading.",
+    },
+    RuleInfo {
         code: "TAB001",
         name: "orphan table",
         default_severity: Severity::Warning,
@@ -362,8 +373,8 @@ mod tests {
         assert_eq!(
             codes,
             vec![
-                "ENV001", "FMT001", "FMT002", "SEC001", "SEC002", "SEC003", "TEX001", "TXT001",
-                "TXT002", "WS001"
+                "ENV001", "FMT001", "FMT002", "SEC001", "SEC002", "SEC003", "SEC004", "TEX001",
+                "TXT001", "TXT002", "WS001"
             ]
         );
     }
@@ -399,8 +410,8 @@ mod tests {
             vec![
                 "CAP001", "CAP002", "CIT001", "CIT002", "CIT003", "CIT004", "CIT005", "CIT006",
                 "ENV001", "FIG001", "FIG002", "FIG003", "FIG004", "FIG005", "FIG006", "FMT001",
-                "FMT002", "LBL001", "REF001", "SEC001", "SEC002", "SEC003", "TAB001", "TAB002",
-                "TEX001", "TXT001", "TXT002", "WS001"
+                "FMT002", "LBL001", "REF001", "SEC001", "SEC002", "SEC003", "SEC004", "TAB001",
+                "TAB002", "TEX001", "TXT001", "TXT002", "WS001"
             ]
         );
     }

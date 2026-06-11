@@ -1,7 +1,8 @@
 use serde::Serialize;
 use serde_json::json;
+use std::collections::BTreeMap;
 use std::env;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use crate::baseline::diagnostic_fingerprint;
 use crate::checker::CheckResult;
@@ -96,6 +97,37 @@ pub fn render_sarif(result: &CheckResult, root: &Path) -> Result<String, serde_j
                 "results": results,
             },
         ],
+    }))
+}
+
+pub fn render_lsp(result: &CheckResult) -> Result<String, serde_json::Error> {
+    let mut by_file: BTreeMap<&PathBuf, Vec<serde_json::Value>> = BTreeMap::new();
+
+    for diagnostic in &result.diagnostics {
+        by_file
+            .entry(&diagnostic.file)
+            .or_default()
+            .push(lsp_diagnostic(diagnostic));
+    }
+
+    let diagnostics: Vec<_> = by_file
+        .into_iter()
+        .map(|(file, diagnostics)| {
+            json!({
+                "uri": file_uri(file),
+                "diagnostics": diagnostics,
+            })
+        })
+        .collect();
+
+    serde_json::to_string_pretty(&json!({
+        "version": env!("CARGO_PKG_VERSION"),
+        "diagnostics": diagnostics,
+        "summary": JsonSummary {
+            files_checked: result.files_checked,
+            errors: result.error_count(),
+            warnings: result.warning_count(),
+        },
     }))
 }
 
@@ -265,6 +297,61 @@ fn sarif_properties(diagnostic: &Diagnostic) -> serde_json::Value {
     match &diagnostic.hint {
         Some(hint) => json!({ "hint": hint }),
         None => json!({}),
+    }
+}
+
+fn lsp_diagnostic(diagnostic: &Diagnostic) -> serde_json::Value {
+    let line = diagnostic.line.saturating_sub(1);
+    let character = diagnostic.column.saturating_sub(1);
+    let mut value = json!({
+        "range": {
+            "start": {
+                "line": line,
+                "character": character,
+            },
+            "end": {
+                "line": line,
+                "character": character + 1,
+            },
+        },
+        "severity": lsp_severity(diagnostic.severity),
+        "code": diagnostic.code,
+        "source": "paper-linter",
+        "message": diagnostic.message,
+    });
+
+    if let Some(hint) = &diagnostic.hint {
+        value["data"] = json!({ "hint": hint });
+    }
+
+    value
+}
+
+fn lsp_severity(severity: Severity) -> u8 {
+    match severity {
+        Severity::Error => 1,
+        Severity::Warning => 2,
+    }
+}
+
+fn file_uri(path: &Path) -> String {
+    let raw = path
+        .to_string_lossy()
+        .replace('\\', "/")
+        .chars()
+        .flat_map(|character| match character {
+            '%' => "%25".chars().collect::<Vec<_>>(),
+            ' ' => "%20".chars().collect(),
+            '#' => "%23".chars().collect(),
+            '?' => "%3F".chars().collect(),
+            character => vec![character],
+        })
+        .collect::<String>();
+
+    if raw.starts_with('/') {
+        format!("file://{raw}")
+    } else {
+        format!("file:///{raw}")
     }
 }
 

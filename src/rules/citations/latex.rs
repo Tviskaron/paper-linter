@@ -1,11 +1,26 @@
 use std::path::Path;
 
 use super::syntax::{balanced_group_end, skip_ascii_whitespace};
-use super::{BibliographyDecl, CitationUse};
+use super::{BibliographyDecl, CitationKind, CitationUse};
+
+#[derive(Debug, Clone, Copy)]
+struct ParsedCommand<'a> {
+    name: &'a str,
+    after_name: usize,
+    is_starred: bool,
+}
+
+#[derive(Debug, Clone)]
+struct CommandArguments {
+    required: Vec<(usize, usize)>,
+    has_optional: bool,
+    end: usize,
+}
 
 pub(super) fn find_citations(path: &Path, content: &str) -> Vec<CitationUse> {
     let mut citations = Vec::new();
     let mut verbatim_depth = 0usize;
+    let mut line_start_offset = 0usize;
 
     for (line_index, raw_line) in content.lines().enumerate() {
         let line = uncommented_line(raw_line);
@@ -13,6 +28,7 @@ pub(super) fn find_citations(path: &Path, content: &str) -> Vec<CitationUse> {
         let next_verbatim_depth = update_verbatim_depth(line, verbatim_depth);
         if !scan_line {
             verbatim_depth = next_verbatim_depth;
+            line_start_offset += raw_line.len() + 1;
             continue;
         }
 
@@ -20,40 +36,53 @@ pub(super) fn find_citations(path: &Path, content: &str) -> Vec<CitationUse> {
 
         while let Some(relative) = line[offset..].find('\\') {
             let start = offset + relative;
-            let Some((name, after_name)) = read_command_name(line, start) else {
+            let Some(command) = read_command_name(line, start) else {
                 offset = start + 1;
                 continue;
             };
 
-            let is_nocite = name.eq_ignore_ascii_case("nocite");
-            if !is_citation_command(name) && !is_nocite {
-                offset = after_name;
-                continue;
-            }
-
-            let Some((body_start, body_end)) = read_command_argument(line, after_name) else {
-                offset = after_name;
+            let Some(kind) = citation_kind(command.name) else {
+                offset = command.after_name;
                 continue;
             };
+            let is_nocite = kind == CitationKind::NoCite;
 
-            for (key, key_column_offset) in split_keys(&line[body_start..body_end]) {
-                if contains_macro_parameter(&key) {
-                    continue;
+            let Some(arguments) = read_command_arguments(line, command.after_name) else {
+                offset = command.after_name;
+                continue;
+            };
+            let key_groups = citation_key_groups(command.name, &arguments);
+            let command_end = citation_command_end(command.name, &arguments);
+
+            for (body_start, body_end) in key_groups {
+                for (key, key_column_offset) in split_keys(&line[body_start..body_end]) {
+                    if contains_macro_parameter(&key) {
+                        continue;
+                    }
+
+                    citations.push(CitationUse {
+                        key,
+                        command: command.name.to_string(),
+                        kind,
+                        file: path.to_path_buf(),
+                        line: line_index + 1,
+                        column: char_column(line, body_start + key_column_offset),
+                        is_nocite,
+                        is_starred: command.is_starred,
+                        has_optional_arg: arguments.has_optional,
+                        command_start: line_start_offset + start,
+                        command_end: line_start_offset + command_end,
+                        argument_start: line_start_offset + body_start,
+                        argument_end: line_start_offset + body_end,
+                    });
                 }
-
-                citations.push(CitationUse {
-                    key,
-                    file: path.to_path_buf(),
-                    line: line_index + 1,
-                    column: char_column(line, body_start + key_column_offset),
-                    is_nocite,
-                });
             }
 
-            offset = body_end + 1;
+            offset = command_end;
         }
 
         verbatim_depth = next_verbatim_depth;
+        line_start_offset += raw_line.len() + 1;
     }
 
     citations
@@ -71,18 +100,22 @@ pub(super) fn find_bibliographies(path: &Path, content: &str) -> Vec<Bibliograph
             continue;
         }
 
-        let Some((name, after_name)) = read_command_name(content, start) else {
+        let Some(command) = read_command_name(content, start) else {
             offset = start + 1;
             continue;
         };
 
-        if name != "bibliography" && name != "addbibresource" {
-            offset = after_name;
+        if command.name != "bibliography" && command.name != "addbibresource" {
+            offset = command.after_name;
             continue;
         }
 
-        let Some((body_start, body_end)) = read_command_argument(content, after_name) else {
-            offset = after_name;
+        let Some(arguments) = read_command_arguments(content, command.after_name) else {
+            offset = command.after_name;
+            continue;
+        };
+        let Some((body_start, body_end)) = arguments.required.first().copied() else {
+            offset = arguments.end;
             continue;
         };
 
@@ -96,13 +129,13 @@ pub(super) fn find_bibliographies(path: &Path, content: &str) -> Vec<Bibliograph
             });
         }
 
-        offset = body_end + 1;
+        offset = arguments.end;
     }
 
     declarations
 }
 
-fn read_command_name(line: &str, slash_index: usize) -> Option<(&str, usize)> {
+fn read_command_name(line: &str, slash_index: usize) -> Option<ParsedCommand<'_>> {
     let command_start = slash_index + 1;
     let mut command_end = command_start;
 
@@ -119,62 +152,248 @@ fn read_command_name(line: &str, slash_index: usize) -> Option<(&str, usize)> {
     }
 
     let name = &line[command_start..command_end];
-    if line[command_end..].starts_with('*') {
-        Some((name, command_end + 1))
-    } else {
-        Some((name, command_end))
-    }
+    let is_starred = line[command_end..].starts_with('*');
+    let after_name = command_end + usize::from(is_starred);
+    Some(ParsedCommand {
+        name,
+        after_name,
+        is_starred,
+    })
 }
 
-fn read_command_argument(line: &str, mut offset: usize) -> Option<(usize, usize)> {
+fn read_command_arguments(line: &str, mut offset: usize) -> Option<CommandArguments> {
+    let mut required = Vec::new();
+    let mut has_optional = false;
+
     loop {
         offset = skip_ascii_whitespace(line, offset);
-        if !line[offset..].starts_with('[') {
-            break;
+        if line[offset..].starts_with('[') {
+            has_optional = true;
+            offset = balanced_group_end(line, offset, '[', ']')? + 1;
+            continue;
         }
 
-        offset = balanced_group_end(line, offset, '[', ']')? + 1;
+        if line[offset..].starts_with('{') {
+            let end = balanced_group_end(line, offset, '{', '}')?;
+            required.push((offset + 1, end));
+            offset = end + 1;
+            continue;
+        }
+
+        break;
     }
 
-    offset = skip_ascii_whitespace(line, offset);
-    if !line[offset..].starts_with('{') {
-        return None;
+    if required.is_empty() {
+        None
+    } else {
+        Some(CommandArguments {
+            required,
+            has_optional,
+            end: offset,
+        })
     }
-
-    let end = balanced_group_end(line, offset, '{', '}')?;
-    Some((offset + 1, end))
 }
 
-fn is_citation_command(name: &str) -> bool {
+fn citation_key_groups(name: &str, arguments: &CommandArguments) -> Vec<(usize, usize)> {
+    if is_volume_citation_command(name) {
+        arguments.required.last().copied().into_iter().collect()
+    } else if is_multi_citation_command(name) {
+        arguments.required.clone()
+    } else {
+        arguments.required.first().copied().into_iter().collect()
+    }
+}
+
+fn citation_command_end(name: &str, arguments: &CommandArguments) -> usize {
+    if is_volume_citation_command(name) || is_multi_citation_command(name) {
+        arguments.end
+    } else {
+        arguments
+            .required
+            .first()
+            .map(|(_, end)| end + 1)
+            .unwrap_or(arguments.end)
+    }
+}
+
+fn citation_kind(name: &str) -> Option<CitationKind> {
+    if name == "nocite" {
+        return Some(CitationKind::NoCite);
+    }
+    if is_textual_citation_command(name) {
+        return Some(CitationKind::Textual);
+    }
+    if is_author_year_citation_command(name) {
+        return Some(CitationKind::AuthorYearOnly);
+    }
+    if is_parenthetical_citation_command(name) {
+        return Some(CitationKind::Parenthetical);
+    }
+    if is_neutral_citation_command(name) {
+        return Some(CitationKind::Neutral);
+    }
+    None
+}
+
+fn is_parenthetical_citation_command(name: &str) -> bool {
     matches!(
         name,
-        "cite"
-            | "Cite"
-            | "citep"
+        "citep"
             | "Citep"
-            | "citet"
+            | "parencite"
+            | "Parencite"
+            | "parencites"
+            | "Parencites"
+            | "autocite"
+            | "Autocite"
+            | "autocites"
+            | "Autocites"
+            | "smartcite"
+            | "Smartcite"
+            | "smartcites"
+            | "Smartcites"
+            | "footcite"
+            | "Footcite"
+            | "footcites"
+            | "supercite"
+            | "Supercite"
+            | "supercites"
+            | "Pnotecite"
+            | "pnotecite"
+    )
+}
+
+fn is_textual_citation_command(name: &str) -> bool {
+    matches!(
+        name,
+        "citet"
             | "Citet"
-            | "citealp"
-            | "Citealp"
+            | "textcite"
+            | "Textcite"
+            | "textcites"
+            | "Textcites"
             | "citealt"
             | "Citealt"
-            | "citeauthor"
+            | "citealp"
+            | "Citealp"
+    )
+}
+
+fn is_author_year_citation_command(name: &str) -> bool {
+    matches!(
+        name,
+        "citeauthor"
             | "Citeauthor"
             | "citeyear"
             | "Citeyear"
             | "citeyearpar"
             | "Citeyearpar"
-            | "parencite"
-            | "Parencite"
-            | "textcite"
-            | "Textcite"
-            | "autocite"
-            | "Autocite"
-            | "footcite"
-            | "Footcite"
-            | "supercite"
-            | "Supercite"
+            | "citenum"
+            | "citetitle"
+            | "Citetitle"
+            | "citedate"
+            | "Citedate"
+            | "citeurl"
     )
+}
+
+fn is_neutral_citation_command(name: &str) -> bool {
+    matches!(
+        name,
+        "cite"
+            | "Cite"
+            | "cites"
+            | "Cites"
+            | "notecite"
+            | "Notecite"
+            | "fnotecite"
+            | "Fnotecite"
+            | "fullcite"
+            | "Fullcite"
+            | "footfullcite"
+            | "footcitetext"
+            | "footcitetexts"
+            | "Avolcite"
+            | "Avolcites"
+            | "avolcite"
+            | "avolcites"
+            | "Ftvolcite"
+            | "Ftvolcites"
+            | "ftvolcite"
+            | "ftvolcites"
+            | "Fvolcite"
+            | "Fvolcites"
+            | "fvolcite"
+            | "fvolcites"
+            | "Pvolcite"
+            | "Pvolcites"
+            | "pvolcite"
+            | "pvolcites"
+            | "Svolcite"
+            | "Svolcites"
+            | "svolcite"
+            | "svolcites"
+            | "Tvolcite"
+            | "Tvolcites"
+            | "tvolcite"
+            | "tvolcites"
+            | "Volcite"
+            | "Volcites"
+            | "volcite"
+            | "volcites"
+    )
+}
+
+fn is_volume_citation_command(name: &str) -> bool {
+    matches!(
+        name,
+        "Avolcite"
+            | "Avolcites"
+            | "avolcite"
+            | "avolcites"
+            | "Ftvolcite"
+            | "Ftvolcites"
+            | "ftvolcite"
+            | "ftvolcites"
+            | "Fvolcite"
+            | "Fvolcites"
+            | "fvolcite"
+            | "fvolcites"
+            | "Pvolcite"
+            | "Pvolcites"
+            | "pvolcite"
+            | "pvolcites"
+            | "Svolcite"
+            | "Svolcites"
+            | "svolcite"
+            | "svolcites"
+            | "Tvolcite"
+            | "Tvolcites"
+            | "tvolcite"
+            | "tvolcites"
+            | "Volcite"
+            | "Volcites"
+            | "volcite"
+            | "volcites"
+    )
+}
+
+fn is_multi_citation_command(name: &str) -> bool {
+    matches!(
+        name,
+        "cites"
+            | "Cites"
+            | "parencites"
+            | "Parencites"
+            | "textcites"
+            | "Textcites"
+            | "autocites"
+            | "Autocites"
+            | "smartcites"
+            | "Smartcites"
+            | "footcites"
+            | "supercites"
+    ) || name.ends_with("cites")
 }
 
 fn split_keys(body: &str) -> Vec<(String, usize)> {
@@ -244,30 +463,34 @@ fn update_verbatim_depth(line: &str, mut depth: usize) -> usize {
     let mut offset = 0;
     while let Some(relative) = line[offset..].find('\\') {
         let start = offset + relative;
-        let Some((name, after_name)) = read_command_name(line, start) else {
+        let Some(command) = read_command_name(line, start) else {
             offset = start + 1;
             continue;
         };
 
-        if name != "begin" && name != "end" {
-            offset = after_name;
+        if command.name != "begin" && command.name != "end" {
+            offset = command.after_name;
             continue;
         }
 
-        let Some((body_start, body_end)) = read_command_argument(line, after_name) else {
-            offset = after_name;
+        let Some(arguments) = read_command_arguments(line, command.after_name) else {
+            offset = command.after_name;
+            continue;
+        };
+        let Some((body_start, body_end)) = arguments.required.first().copied() else {
+            offset = arguments.end;
             continue;
         };
 
         if is_verbatim_environment(line[body_start..body_end].trim()) {
-            if name == "begin" {
+            if command.name == "begin" {
                 depth += 1;
             } else {
                 depth = depth.saturating_sub(1);
             }
         }
 
-        offset = body_end + 1;
+        offset = arguments.end;
     }
 
     depth
@@ -325,6 +548,33 @@ mod tests {
             .collect();
         assert_eq!(keys, vec!["alpha", "beta", "gamma"]);
         assert_eq!(citations[0].column, 19);
+        assert_eq!(citations[0].command, "citep");
+        assert!(citations[0].has_optional_arg);
+        assert!(!citations[0].is_starred);
+        assert_eq!(citations[2].command, "citet");
+        assert!(citations[2].is_starred);
+    }
+
+    #[test]
+    fn finds_biblatex_plural_and_volume_citations() {
+        let citations = find_citations(
+            Path::new("paper.tex"),
+            r"\Cites{alpha}{beta} \parencites{gamma}{delta} \volcite{2}[45]{epsilon} \citeurl{zeta}",
+        );
+
+        let keys: Vec<_> = citations
+            .iter()
+            .map(|citation| citation.key.as_str())
+            .collect();
+        assert_eq!(
+            keys,
+            vec!["alpha", "beta", "gamma", "delta", "epsilon", "zeta"]
+        );
+        assert_eq!(citations[0].command, "Cites");
+        assert_eq!(citations[4].command, "volcite");
+        assert!(citations[4].has_optional_arg);
+        assert_eq!(citations[4].argument_start, 62);
+        assert_eq!(citations[4].argument_end, 69);
     }
 
     #[test]
@@ -356,6 +606,17 @@ mod tests {
 
         assert_eq!(citations.len(), 1);
         assert_eq!(citations[0].key, "real");
+    }
+
+    #[test]
+    fn does_not_treat_following_braced_text_as_citation_keys() {
+        let citations = find_citations(
+            Path::new("paper.tex"),
+            r"\citep{wagner2021improving} {propose DIPOLE, an approach.}",
+        );
+
+        assert_eq!(citations.len(), 1);
+        assert_eq!(citations[0].key, "wagner2021improving");
     }
 
     #[test]

@@ -14,7 +14,7 @@ mod syntax;
 
 use bbl::parse_bbl_keys;
 use bibtex::{parse_bib_entries, parse_bib_entries_for_keys};
-use latex::{find_bibliographies, find_citations};
+use latex::{find_bbl_inputs, find_bibliographies, find_citations, uses_bibunits};
 pub use paths::explicit_bib_files;
 use paths::{alternate_bib_paths, bbl_fallback_paths, bibliography_paths, resolve_bib_path};
 use similarity::find_similar_titles;
@@ -84,11 +84,15 @@ pub fn check_project(
 ) -> Result<Vec<Diagnostic>, io::Error> {
     let mut citations = Vec::new();
     let mut declarations = Vec::new();
+    let mut bbl_inputs = Vec::new();
+    let mut has_bibunits = false;
     let mut source_bibitem_keys = HashSet::new();
 
     for file in tex_files {
         citations.extend(find_citations(&file.path, &file.content));
         declarations.extend(find_bibliographies(&file.path, &file.content));
+        bbl_inputs.extend(find_bbl_inputs(&file.path, &file.content));
+        has_bibunits |= uses_bibunits(&file.content);
         source_bibitem_keys.extend(parse_bbl_keys(&file.content));
     }
 
@@ -107,6 +111,11 @@ pub fn check_project(
     );
     let mut bbl_keys = HashSet::new();
     let source_files: Vec<_> = tex_files.iter().map(|file| file.path.clone()).collect();
+
+    bbl_keys.extend(parse_bbl_input_keys(&bbl_inputs));
+    if has_bibunits {
+        bbl_keys.extend(parse_bibunit_bbl_keys(&source_files));
+    }
 
     for declaration in &declarations {
         bbl_keys.extend(parse_bbl_fallback_keys(declaration, &source_files));
@@ -428,6 +437,43 @@ fn parse_bbl_fallback_keys(
 ) -> Vec<String> {
     bbl_fallback_paths(declaration, source_files)
         .into_iter()
+        .filter_map(|path| fs::read_to_string(path).ok())
+        .flat_map(|content| parse_bbl_keys(&content))
+        .collect()
+}
+
+fn parse_bbl_input_keys(paths: &[PathBuf]) -> Vec<String> {
+    paths
+        .iter()
+        .filter_map(|path| fs::read_to_string(path).ok())
+        .flat_map(|content| parse_bbl_keys(&content))
+        .collect()
+}
+
+fn parse_bibunit_bbl_keys(source_files: &[PathBuf]) -> Vec<String> {
+    let mut directories: Vec<_> = source_files
+        .iter()
+        .filter_map(|path| path.parent().map(Path::to_path_buf))
+        .collect();
+    directories.sort();
+    directories.dedup();
+
+    directories
+        .into_iter()
+        .filter_map(|directory| fs::read_dir(directory).ok())
+        .flat_map(|entries| entries.filter_map(Result::ok))
+        .map(|entry| entry.path())
+        .filter(|path| {
+            path.file_name()
+                .and_then(|name| name.to_str())
+                .is_some_and(|name| {
+                    name.starts_with("bu")
+                        && name.ends_with(".bbl")
+                        && name[2..name.len() - ".bbl".len()]
+                            .chars()
+                            .all(|character| character.is_ascii_digit())
+                })
+        })
         .filter_map(|path| fs::read_to_string(path).ok())
         .flat_map(|content| parse_bbl_keys(&content))
         .collect()
@@ -1013,8 +1059,24 @@ fn is_citation_punctuation_exception(previous: &str, punctuation: char) -> bool 
     let tail = line[tail_start..].to_ascii_lowercase();
 
     [
-        "e.g.~", "e.g.,~", "i.e.~", "i.e.,~", "et al.~", "et al.,~", "etc.~", "cf.~", "cf.,~",
-        "vs.~", "\\eg,~", "\\eg~", "\\ie,~", "\\ie~",
+        "e.g.~",
+        "e.g.,~",
+        "i.e.~",
+        "i.e.,~",
+        "et al.~",
+        "et al.,~",
+        "et~al.~",
+        "et~al.,~",
+        "\\etal.~",
+        "\\etal.,~",
+        "etc.~",
+        "cf.~",
+        "cf.,~",
+        "vs.~",
+        "\\eg,~",
+        "\\eg~",
+        "\\ie,~",
+        "\\ie~",
     ]
     .iter()
     .any(|prefix| tail.ends_with(prefix))
@@ -1162,9 +1224,8 @@ impl CitationCommandFamily {
 
 fn citation_command_family(command: &str) -> Option<CitationCommandFamily> {
     match command {
-        "citep" | "Citep" | "citealp" | "citealt" | "citet" | "Citet" | "citeyearpar" => {
-            Some(CitationCommandFamily::Natbib)
-        }
+        "citep" | "Citep" | "citealp" | "Citealp" | "citealt" | "Citealt" | "citet" | "Citet"
+        | "citeyearpar" | "Citeyearpar" => Some(CitationCommandFamily::Natbib),
         "parencite" | "Parencite" | "parencites" | "Parencites" | "textcite" | "Textcite"
         | "textcites" | "Textcites" | "autocite" | "Autocite" | "autocites" | "Autocites"
         | "smartcite" | "Smartcite" | "smartcites" | "Smartcites" | "footcite" | "Footcite"

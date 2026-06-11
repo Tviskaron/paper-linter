@@ -85,6 +85,89 @@ pub(super) fn find_citations(path: &Path, content: &str) -> Vec<CitationUse> {
         line_start_offset += raw_line.len() + 1;
     }
 
+    let parsed_command_starts: std::collections::HashSet<_> = citations
+        .iter()
+        .map(|citation| citation.command_start)
+        .collect();
+    citations.extend(find_multiline_citations(
+        path,
+        content,
+        &parsed_command_starts,
+    ));
+
+    citations
+}
+
+fn find_multiline_citations(
+    path: &Path,
+    content: &str,
+    parsed_command_starts: &std::collections::HashSet<usize>,
+) -> Vec<CitationUse> {
+    let mut citations = Vec::new();
+    let line_starts = line_starts(content);
+    let mut offset = 0;
+
+    while let Some(relative) = content[offset..].find('\\') {
+        let start = offset + relative;
+        if parsed_command_starts.contains(&start) || is_commented_position(content, start) {
+            offset = start + 1;
+            continue;
+        }
+
+        let Some(command) = read_command_name(content, start) else {
+            offset = start + 1;
+            continue;
+        };
+
+        let Some(kind) = citation_kind(command.name) else {
+            offset = command.after_name;
+            continue;
+        };
+
+        let Some(arguments) = read_command_arguments(content, command.after_name) else {
+            offset = command.after_name;
+            continue;
+        };
+        if !arguments
+            .required
+            .iter()
+            .any(|(body_start, body_end)| content[*body_start..*body_end].contains('\n'))
+        {
+            offset = arguments.end;
+            continue;
+        }
+
+        let key_groups = citation_key_groups(command.name, &arguments);
+        let command_end = citation_command_end(command.name, &arguments);
+        for (body_start, body_end) in key_groups {
+            for (key, key_column_offset) in split_keys(&content[body_start..body_end]) {
+                if contains_macro_parameter(&key) {
+                    continue;
+                }
+
+                let key_start = body_start + key_column_offset;
+                let (line, column) = line_column(&line_starts, content, key_start);
+                citations.push(CitationUse {
+                    key,
+                    command: command.name.to_string(),
+                    kind,
+                    file: path.to_path_buf(),
+                    line,
+                    column,
+                    is_nocite: kind == CitationKind::NoCite,
+                    is_starred: command.is_starred,
+                    has_optional_arg: arguments.has_optional,
+                    command_start: start,
+                    command_end,
+                    argument_start: body_start,
+                    argument_end: body_end,
+                });
+            }
+        }
+
+        offset = arguments.end;
+    }
+
     citations
 }
 
@@ -105,7 +188,7 @@ pub(super) fn find_bibliographies(path: &Path, content: &str) -> Vec<Bibliograph
             continue;
         };
 
-        if command.name != "bibliography" && command.name != "addbibresource" {
+        if !is_bibliography_command(command.name) {
             offset = command.after_name;
             continue;
         }
@@ -133,6 +216,75 @@ pub(super) fn find_bibliographies(path: &Path, content: &str) -> Vec<Bibliograph
     }
 
     declarations
+}
+
+pub(super) fn find_bbl_inputs(path: &Path, content: &str) -> Vec<std::path::PathBuf> {
+    let mut inputs = Vec::new();
+    let mut offset = 0;
+
+    while let Some(relative) = content[offset..].find('\\') {
+        let start = offset + relative;
+        if is_commented_position(content, start) {
+            offset = start + 1;
+            continue;
+        }
+
+        let Some(command) = read_command_name(content, start) else {
+            offset = start + 1;
+            continue;
+        };
+
+        if command.name != "input" && command.name != "include" {
+            offset = command.after_name;
+            continue;
+        }
+
+        let Some(arguments) = read_command_arguments(content, command.after_name) else {
+            offset = command.after_name;
+            continue;
+        };
+        let Some((body_start, body_end)) = arguments.required.first().copied() else {
+            offset = arguments.end;
+            continue;
+        };
+
+        let raw_path = content[body_start..body_end].trim();
+        if raw_path.ends_with(".bbl") {
+            let bbl_path = resolve_relative_path(path, raw_path);
+            inputs.push(bbl_path);
+        }
+
+        offset = arguments.end;
+    }
+
+    inputs.sort();
+    inputs.dedup();
+    inputs
+}
+
+pub(super) fn uses_bibunits(content: &str) -> bool {
+    content.contains("\\defaultbibliography")
+        || content.contains("\\begin{bibunit}")
+        || content.contains("\\putbib")
+}
+
+fn is_bibliography_command(name: &str) -> bool {
+    matches!(
+        name,
+        "bibliography" | "addbibresource" | "defaultbibliography"
+    )
+}
+
+fn resolve_relative_path(current_file: &Path, raw_path: &str) -> std::path::PathBuf {
+    let path = std::path::PathBuf::from(raw_path);
+    if path.is_absolute() {
+        path
+    } else {
+        current_file
+            .parent()
+            .unwrap_or_else(|| Path::new(""))
+            .join(path)
+    }
 }
 
 fn read_command_name(line: &str, slash_index: usize) -> Option<ParsedCommand<'_>> {
@@ -276,6 +428,8 @@ fn is_textual_citation_command(name: &str) -> bool {
             | "Citealt"
             | "citealp"
             | "Citealp"
+            | "newcite"
+            | "Newcite"
     )
 }
 
@@ -289,6 +443,7 @@ fn is_author_year_citation_command(name: &str) -> bool {
             | "citeyearpar"
             | "Citeyearpar"
             | "citenum"
+            | "citen"
             | "citetitle"
             | "Citetitle"
             | "citedate"

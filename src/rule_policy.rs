@@ -1,9 +1,15 @@
 pub fn enabled_by_default(code: &str) -> bool {
-    !matches!(code, "TXT003" | "TXT004" | "TXT005" | "CMT001" | "PRJ005")
+    !matches!(
+        code,
+        "FMT001" | "FMT002" | "TXT003" | "TXT004" | "TXT005" | "CMT001" | "WS001" | "PRJ005"
+    )
 }
 
 pub fn strict_only(code: &str) -> bool {
-    matches!(code, "CIT010" | "TXT005" | "PRJ005")
+    matches!(
+        code,
+        "CIT010" | "FMT001" | "FMT002" | "TXT005" | "WS001" | "PRJ005"
+    )
 }
 
 pub fn never_promote_to_error(code: &str) -> bool {
@@ -30,9 +36,12 @@ mod tests {
 
     #[test]
     fn opt_in_rules_disabled_by_default() {
+        assert!(!code_is_enabled("FMT001", &[], &[], false));
+        assert!(!code_is_enabled("FMT002", &[], &[], false));
         assert!(!code_is_enabled("TXT003", &[], &[], false));
         assert!(!code_is_enabled("TXT004", &[], &[], false));
         assert!(!code_is_enabled("CMT001", &[], &[], false));
+        assert!(!code_is_enabled("WS001", &[], &[], false));
     }
 
     #[test]
@@ -51,6 +60,15 @@ mod tests {
         assert!(code_is_enabled(
             "TXT005",
             &[String::from("TXT005")],
+            &[],
+            false
+        ));
+
+        assert!(!code_is_enabled("WS001", &[], &[], false));
+        assert!(code_is_enabled("WS001", &[], &[], true));
+        assert!(code_is_enabled(
+            "WS001",
+            &[String::from("WS001")],
             &[],
             false
         ));

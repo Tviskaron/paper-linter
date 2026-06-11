@@ -245,8 +245,9 @@ mod tests {
     #[test]
     fn select_defaults_to_all_default_rules() {
         let options = CheckOptions::default();
-        assert!(code_is_enabled("WS001", &options));
+        assert!(!code_is_enabled("WS001", &options));
         assert!(code_is_enabled("PRJ001", &options));
+        assert!(code_is_enabled("TEX001", &options));
         assert!(!code_is_enabled("TXT003", &options));
     }
 

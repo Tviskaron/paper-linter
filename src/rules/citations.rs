@@ -782,7 +782,7 @@ fn find_citation_punctuation(
         let Some(punctuation) = punctuation_before_citation(previous) else {
             continue;
         };
-        if is_citation_punctuation_exception(previous) {
+        if is_citation_punctuation_exception(previous, punctuation) {
             continue;
         }
 
@@ -813,11 +813,15 @@ fn punctuation_before_citation(previous: &str) -> Option<char> {
     matches!(punctuation, '.' | ',' | '?' | '!' | ';' | ':').then_some(punctuation)
 }
 
-fn is_citation_punctuation_exception(previous: &str) -> bool {
+fn is_citation_punctuation_exception(previous: &str, punctuation: char) -> bool {
     let line = previous
         .rsplit_once('\n')
         .map(|(_, line)| line)
         .unwrap_or(previous);
+    if punctuation == ',' && comma_before_citation_exception(line) {
+        return true;
+    }
+
     let tail_start = line
         .char_indices()
         .rev()
@@ -835,12 +839,36 @@ fn is_citation_punctuation_exception(previous: &str) -> bool {
         || [
             "recently,~",
             "additionally,~",
+            "conversely,~",
             "furthermore,~",
             "moreover,~",
             "however,~",
         ]
         .iter()
         .any(|prefix| line.trim_start().to_ascii_lowercase().ends_with(prefix))
+}
+
+fn comma_before_citation_exception(line: &str) -> bool {
+    let Some(before_tilde) = line.strip_suffix('~') else {
+        return false;
+    };
+    let Some(before_comma) = before_tilde.strip_suffix(',') else {
+        return false;
+    };
+    let before_comma = before_comma.trim_end();
+    let tail_start = before_comma
+        .char_indices()
+        .rev()
+        .nth(80)
+        .map(|(index, _)| index)
+        .unwrap_or(0);
+    let tail = &before_comma[tail_start..];
+
+    tail.contains("\\cite{")
+        || tail.contains("\\citep{")
+        || tail.contains("\\citet{")
+        || tail.contains("\\parencite{")
+        || tail.contains("\\textcite{")
 }
 
 fn find_collapsible_citations(
@@ -1102,9 +1130,10 @@ mod tests {
     use std::path::{Path, PathBuf};
 
     use super::{
-        bibtex::parse_bib_entries, find_duplicate_keys, is_valid_arxiv_id, is_valid_doi,
-        is_valid_url, missing_required_fields, scoped_bibliography_entries,
-        should_skip_resolved_large_bib, BibSource, LARGE_BIB_FAST_PATH_BYTES,
+        bibtex::parse_bib_entries, find_duplicate_keys, is_citation_punctuation_exception,
+        is_valid_arxiv_id, is_valid_doi, is_valid_url, missing_required_fields,
+        scoped_bibliography_entries, should_skip_resolved_large_bib, BibSource,
+        LARGE_BIB_FAST_PATH_BYTES,
     };
 
     #[test]
@@ -1171,6 +1200,24 @@ mod tests {
         assert!(is_valid_arxiv_id("2401.00001v2"));
         assert!(is_valid_arxiv_id("hep-th/9901001"));
         assert!(!is_valid_arxiv_id("bad-id"));
+    }
+
+    #[test]
+    fn citation_punctuation_allows_comma_separated_citation_lists() {
+        assert!(is_citation_punctuation_exception(
+            r"Many works~\cite{first},~",
+            ','
+        ));
+    }
+
+    #[test]
+    fn citation_punctuation_allows_introductory_conversely() {
+        assert!(is_citation_punctuation_exception(r"Conversely,~", ','));
+    }
+
+    #[test]
+    fn citation_punctuation_keeps_sentence_comma_warning() {
+        assert!(!is_citation_punctuation_exception(r"This claim,~", ','));
     }
 
     #[test]

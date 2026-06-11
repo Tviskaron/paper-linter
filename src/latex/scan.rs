@@ -135,10 +135,17 @@ struct ActiveEnv {
     graphics: Vec<Graphic>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct LabelMacro {
+    name: String,
+    label_arg_indices: Vec<usize>,
+}
+
 pub fn scan_latex(file: impl Into<PathBuf>, content: &str) -> ScanResult {
     let file = file.into();
     let bytes = content.as_bytes();
     let line_starts = line_starts(content);
+    let label_macros = label_macros(content);
     let mut result = ScanResult::default();
     let mut stack: Vec<ActiveEnv> = Vec::new();
     let mut index = 0;
@@ -271,6 +278,24 @@ pub fn scan_latex(file: impl Into<PathBuf>, content: &str) -> ScanResult {
                 } else {
                     index = after_command;
                 }
+            }
+            _ if label_macros
+                .iter()
+                .any(|macro_def| macro_def.name == command) =>
+            {
+                let macro_def = label_macros
+                    .iter()
+                    .find(|macro_def| macro_def.name == command)
+                    .expect("label macro matched above");
+                index = collect_macro_labels(
+                    content,
+                    after_command,
+                    macro_def,
+                    &location,
+                    &mut stack,
+                    &mut result,
+                )
+                .unwrap_or(after_command);
             }
             "input" | "include" => {
                 if let Some((raw_path, end)) = parse_include_arg(content, after_command) {
@@ -412,8 +437,127 @@ fn collect_labels_in_range(
     }
 }
 
+fn collect_macro_labels(
+    content: &str,
+    start: usize,
+    macro_def: &LabelMacro,
+    location: &SourceLocation,
+    stack: &mut [ActiveEnv],
+    result: &mut ScanResult,
+) -> Option<usize> {
+    let max_arg = macro_def.label_arg_indices.iter().copied().max()?;
+    let mut args = Vec::new();
+    let mut index = start;
+
+    while args.len() < max_arg {
+        let (arg, end) = parse_required_arg(content, index)?;
+        args.push(arg);
+        index = end;
+    }
+
+    for arg_index in &macro_def.label_arg_indices {
+        let Some(key) = args.get(arg_index.saturating_sub(1)) else {
+            continue;
+        };
+        if key.is_empty() || key.contains('#') {
+            continue;
+        }
+
+        let label = Label {
+            key: key.clone(),
+            kind: LabelKind::from(current_float_kind(stack)),
+            location: location.clone(),
+        };
+        attach_label(stack, label.clone());
+        result.labels.push(label);
+    }
+
+    Some(index)
+}
+
 fn current_float_kind(stack: &[ActiveEnv]) -> Option<FloatKind> {
     stack.iter().rev().find_map(|env| env.kind)
+}
+
+fn label_macros(content: &str) -> Vec<LabelMacro> {
+    let mut macros = Vec::new();
+    let mut index = 0;
+
+    while let Some(relative_start) = content[index..].find("\\newcommand") {
+        let command_start = index + relative_start;
+        let after_command = command_start + "\\newcommand".len();
+        if content[after_command..]
+            .chars()
+            .next()
+            .is_some_and(|ch| ch.is_ascii_alphabetic())
+        {
+            index = after_command;
+            continue;
+        }
+
+        let Some((raw_name, name_end)) = parse_required_arg(content, after_command) else {
+            index = after_command;
+            continue;
+        };
+        let Some(name) = raw_name.strip_prefix('\\').filter(|name| !name.is_empty()) else {
+            index = name_end;
+            continue;
+        };
+
+        let after_options = skip_optional_args(content, name_end);
+        let Some((body, body_end)) = parse_required_arg(content, after_options) else {
+            index = after_options;
+            continue;
+        };
+        let label_arg_indices = label_parameter_indices(&body);
+        if !label_arg_indices.is_empty() {
+            macros.push(LabelMacro {
+                name: name.to_string(),
+                label_arg_indices,
+            });
+        }
+        index = body_end;
+    }
+
+    macros
+}
+
+fn label_parameter_indices(body: &str) -> Vec<usize> {
+    let bytes = body.as_bytes();
+    let mut indices = Vec::new();
+    let mut offset = 0;
+
+    while let Some(relative_start) = body[offset..].find("\\label") {
+        let label_start = offset + relative_start;
+        let after_label = label_start + "\\label".len();
+        if body[after_label..]
+            .chars()
+            .next()
+            .is_some_and(|ch| ch.is_ascii_alphabetic())
+        {
+            offset = after_label;
+            continue;
+        }
+
+        let arg_start = skip_ws(bytes, after_label);
+        let parameter_start = arg_start + 1;
+        if bytes.get(arg_start) == Some(&b'{')
+            && bytes.get(parameter_start) == Some(&b'#')
+            && bytes
+                .get(parameter_start + 1)
+                .is_some_and(|byte| byte.is_ascii_digit())
+            && bytes.get(parameter_start + 2) == Some(&b'}')
+        {
+            indices.push((bytes[parameter_start + 1] - b'0') as usize);
+            offset = parameter_start + 3;
+        } else {
+            offset = after_label;
+        }
+    }
+
+    indices.sort_unstable();
+    indices.dedup();
+    indices
 }
 
 fn parse_command_name(content: &str, start: usize) -> Option<(String, usize)> {
@@ -719,6 +863,23 @@ mod tests {
         assert_eq!(scan.floats.len(), 1);
         assert_eq!(scan.floats[0].labels[0].key, "fig:model");
         assert_eq!(scan.refs[0].key, "fig:model");
+    }
+
+    #[test]
+    fn collects_labels_from_simple_label_macros() {
+        let scan = scan_latex(
+            Path::new("paper.tex"),
+            "\\newcommand{\\ffn}[2]{%\n  \\refstepcounter{footnote}%\n  \\label{#1}%\n  #2\n}\n\\begin{figure}\n\\ffn{ff:sps}{SPS note.}\n\\end{figure}\nSee~\\ref{ff:sps}.\n",
+        );
+
+        assert!(scan.labels.iter().any(|label| label.key == "ff:sps"));
+        let label = scan
+            .labels
+            .iter()
+            .find(|label| label.key == "ff:sps")
+            .expect("macro-derived label");
+        assert_eq!(label.kind, LabelKind::Figure);
+        assert_eq!(scan.refs[0].key, "ff:sps");
     }
 
     #[test]

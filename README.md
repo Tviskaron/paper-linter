@@ -45,7 +45,7 @@ An extremely fast linter for LaTeX papers.
 
 ```console
 paper-linter check paper.tex
-paper.tex:42:18: warning[WS001] trailing whitespace
+paper.tex:42:18: warning[TXT001] placeholder text
 checked 1 file(s), 0 error(s), 1 warning(s)
 ```
 
@@ -55,15 +55,15 @@ implemented:
 
 - `CIT001`-`CIT009`: citation and bibliography consistency/style checks, with
   `.bbl` fallback for arXiv sources that omit `.bib` files.
-- `FMT001`: missing final newline.
-- `FMT002`: repeated blank lines.
+- `FMT001`: missing final newline (opt-in or `--strict`).
+- `FMT002`: repeated blank lines (opt-in or `--strict`).
 - `ENV001`: environment begin/end mismatch.
 - `SEC001`: skipped section hierarchy level.
 - `SEC002`: empty section.
 - `TEX001`: missing non-breaking space before references or citations.
 - `TXT001`: placeholder text.
 - `TXT002`: repeated word.
-- `WS001`: trailing whitespace.
+- `WS001`: trailing whitespace (opt-in or `--strict`).
 
 The remaining checks listed above describe the intended MVP and v1.0 roadmap.
 
@@ -149,7 +149,7 @@ Run the linter:
 paper-linter check paper.tex
 paper-linter check paper.tex --strict
 paper-linter check paper.tex --format json
-paper-linter check . --select WS --ignore WS001
+paper-linter check . --select WS
 paper-linter check . --all-tex
 paper-linter check paper.tex refs.bib --select CIT
 ```

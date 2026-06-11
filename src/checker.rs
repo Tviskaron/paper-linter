@@ -14,6 +14,7 @@ pub struct CheckOptions {
     pub select: Vec<String>,
     pub ignore: Vec<String>,
     pub strict: bool,
+    pub all_tex: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -61,7 +62,7 @@ impl fmt::Display for ToolError {
 impl std::error::Error for ToolError {}
 
 pub fn run_check(options: &CheckOptions) -> Result<CheckResult, ToolError> {
-    let files = discover_tex_files(&options.paths)
+    let files = discover_tex_files(&options.paths, options.all_tex)
         .map_err(|source| ToolError::Io { path: None, source })?;
     let mut diagnostics = Vec::new();
 

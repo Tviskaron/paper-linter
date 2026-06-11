@@ -23,7 +23,7 @@ impl Rule for EmptySection {
         for (index, line) in content.lines().enumerate() {
             if let Some(heading) = section_heading(line, index + 1) {
                 if let Some(previous) = open_section {
-                    if !has_content && heading.level <= previous.level {
+                    if !previous.starred && !has_content && heading.level <= previous.level {
                         diagnostics.push(Diagnostic::new(
                             self.code(),
                             Severity::Warning,
@@ -36,7 +36,7 @@ impl Rule for EmptySection {
                 }
 
                 open_section = Some(heading);
-                has_content = false;
+                has_content = heading.content_after_heading;
                 continue;
             }
 
@@ -46,7 +46,7 @@ impl Rule for EmptySection {
         }
 
         if let Some(previous) = open_section {
-            if !has_content {
+            if !previous.starred && !has_content {
                 diagnostics.push(Diagnostic::new(
                     self.code(),
                     Severity::Warning,
@@ -93,6 +93,22 @@ mod tests {
     fn ignores_section_with_text() {
         let diagnostics =
             EmptySection.check_file(Path::new("paper.tex"), "\\section{Intro}\nText.\n");
+
+        assert!(diagnostics.is_empty());
+    }
+
+    #[test]
+    fn ignores_section_with_inline_text() {
+        let diagnostics =
+            EmptySection.check_file(Path::new("paper.tex"), "\\section{Intro} Text.\n");
+
+        assert!(diagnostics.is_empty());
+    }
+
+    #[test]
+    fn ignores_empty_starred_wrapper_section() {
+        let content = "\\section*{Appendix}\n\\label{sec:appendix}\n\\section{Details}\nText.\n";
+        let diagnostics = EmptySection.check_file(Path::new("paper.tex"), content);
 
         assert!(diagnostics.is_empty());
     }

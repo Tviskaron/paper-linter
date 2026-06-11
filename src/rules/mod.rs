@@ -1,3 +1,4 @@
+pub mod citations;
 mod ws001;
 
 use std::path::Path;

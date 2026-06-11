@@ -1,5 +1,6 @@
 mod cap001;
 mod cap002;
+mod cit007;
 pub(crate) mod citations;
 mod env001;
 mod fig001;
@@ -88,15 +89,17 @@ static FIG003_RULE: fig003::AssetCaseMismatch = fig003::AssetCaseMismatch;
 static FIG004_RULE: fig004::MissingFigureLabel = fig004::MissingFigureLabel;
 static FIG005_RULE: fig005::UnsafeGraphicPath = fig005::UnsafeGraphicPath;
 static FIG006_RULE: fig006::ImageFormatPolicy = fig006::ImageFormatPolicy;
+static CIT007_RULE: cit007::AdjacentCitations = cit007::AdjacentCitations;
 static TAB001_RULE: tab001::OrphanTable = tab001::OrphanTable;
 static TAB002_RULE: tab002::MissingTableLabel = tab002::MissingTableLabel;
 static LAT001_RULE: lat001::LegacyLatex = lat001::LegacyLatex;
 static LBL001_RULE: lbl001::UnusedLabel = lbl001::UnusedLabel;
 static REF001_RULE: ref001::MissingReferenceTarget = ref001::MissingReferenceTarget;
-static PROJECT_RULES: [&dyn ProjectRule; 13] = [
+static PROJECT_RULES: [&dyn ProjectRule; 14] = [
     &FIG001_RULE,
     &CAP001_RULE,
     &CAP002_RULE,
+    &CIT007_RULE,
     &FIG002_RULE,
     &FIG003_RULE,
     &FIG004_RULE,
@@ -127,7 +130,7 @@ pub struct RuleInfo {
     pub fix: &'static str,
 }
 
-static RULE_INFOS: [RuleInfo; 32] = [
+static RULE_INFOS: [RuleInfo; 33] = [
     RuleInfo {
         code: "CAP001",
         name: "caption missing",
@@ -191,6 +194,14 @@ static RULE_INFOS: [RuleInfo; 32] = [
         summary: "Two active bibliography entries have very similar normalized titles but different keys.",
         why: "Near-duplicate titles often come from merged bibliographies and can leave multiple keys for the same paper.",
         fix: "Compare the entries, delete the duplicate if they describe the same paper, or make the titles/metadata precise if they are different papers.",
+    },
+    RuleInfo {
+        code: "CIT007",
+        name: "adjacent citations",
+        default_severity: Severity::Warning,
+        summary: "Two citation commands appear adjacent where one multi-key citation would be clearer.",
+        why: "Adjacent citation commands often render as duplicated brackets and are harder to maintain than one combined citation.",
+        fix: "Merge the citation keys into one citation command.",
     },
     RuleInfo {
         code: "ENV001",
@@ -418,8 +429,8 @@ mod tests {
         assert_eq!(
             codes,
             vec![
-                "FIG001", "CAP001", "CAP002", "FIG002", "FIG003", "FIG004", "FIG005", "FIG006",
-                "TAB001", "TAB002", "LAT001", "REF001", "LBL001"
+                "FIG001", "CAP001", "CAP002", "CIT007", "FIG002", "FIG003", "FIG004", "FIG005",
+                "FIG006", "TAB001", "TAB002", "LAT001", "REF001", "LBL001"
             ]
         );
     }
@@ -442,9 +453,10 @@ mod tests {
             codes,
             vec![
                 "CAP001", "CAP002", "CIT001", "CIT002", "CIT003", "CIT004", "CIT005", "CIT006",
-                "ENV001", "FIG001", "FIG002", "FIG003", "FIG004", "FIG005", "FIG006", "FMT001",
-                "FMT002", "LBL001", "LAT001", "LAT002", "MTH001", "REF001", "SEC001", "SEC002",
-                "SEC003", "SEC004", "TAB001", "TAB002", "TEX001", "TXT001", "TXT002", "WS001"
+                "CIT007", "ENV001", "FIG001", "FIG002", "FIG003", "FIG004", "FIG005", "FIG006",
+                "FMT001", "FMT002", "LBL001", "LAT001", "LAT002", "MTH001", "REF001", "SEC001",
+                "SEC002", "SEC003", "SEC004", "TAB001", "TAB002", "TEX001", "TXT001", "TXT002",
+                "WS001"
             ]
         );
     }

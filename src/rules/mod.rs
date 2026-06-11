@@ -179,7 +179,7 @@ pub struct RuleInfo {
     pub fix: &'static str,
 }
 
-static RULE_INFOS: [RuleInfo; 51] = [
+static RULE_INFOS: [RuleInfo; 52] = [
     RuleInfo {
         code: "CMT001",
         name: "editorial comment",
@@ -291,6 +291,14 @@ static RULE_INFOS: [RuleInfo; 51] = [
         summary: "A document mixes explicit natbib-style and biblatex-style citation commands.",
         why: "Mixing citation command families often comes from merged drafts and can make citation style package-dependent.",
         fix: "Use one citation package command family consistently.",
+    },
+    RuleInfo {
+        code: "CIT011",
+        name: "non-canonical bibliography key",
+        default_severity: Severity::Warning,
+        summary: "A bibliography key does not follow the firstauthor-year-title convention.",
+        why: "Consistent keys make citations easier to search, review, merge, and compare across papers.",
+        fix: "Rename the bibliography key and matching citations to firstauthorYYYYfirsttitleword, for example skrynnik2024learn.",
     },
     RuleInfo {
         code: "ENV001",
@@ -662,12 +670,12 @@ mod tests {
             codes,
             vec![
                 "CMT001", "CAP001", "CAP002", "BIB001", "CIT001", "CIT002", "CIT003", "CIT004",
-                "CIT005", "CIT006", "CIT007", "CIT008", "CIT009", "CIT010", "ENV001", "FIG001",
-                "FIG002", "FIG003", "FIG004", "FIG005", "FIG006", "FIG007", "FMT001", "FMT002",
-                "LBL001", "LAT001", "LAT002", "MTH001", "MTH002", "MTH003", "PRJ001", "PRJ002",
-                "PRJ003", "PRJ004", "REF001", "SEC001", "SEC002", "SEC003", "SEC004", "SEC005",
-                "SEC006", "TAB001", "TAB002", "TEX001", "TEX002", "TXT001", "TXT002", "TXT003",
-                "TXT004", "TXT005", "WS001"
+                "CIT005", "CIT006", "CIT007", "CIT008", "CIT009", "CIT010", "CIT011", "ENV001",
+                "FIG001", "FIG002", "FIG003", "FIG004", "FIG005", "FIG006", "FIG007", "FMT001",
+                "FMT002", "LBL001", "LAT001", "LAT002", "MTH001", "MTH002", "MTH003", "PRJ001",
+                "PRJ002", "PRJ003", "PRJ004", "REF001", "SEC001", "SEC002", "SEC003", "SEC004",
+                "SEC005", "SEC006", "TAB001", "TAB002", "TEX001", "TEX002", "TXT001", "TXT002",
+                "TXT003", "TXT004", "TXT005", "WS001"
             ]
         );
     }

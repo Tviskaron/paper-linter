@@ -8,7 +8,7 @@ pub fn enabled_by_default(code: &str) -> bool {
 pub fn strict_only(code: &str) -> bool {
     matches!(
         code,
-        "CIT009" | "CIT010" | "FMT001" | "FMT002" | "TXT005" | "WS001" | "PRJ005"
+        "CIT009" | "CIT010" | "CIT011" | "FMT001" | "FMT002" | "TXT005" | "WS001" | "PRJ005"
     )
 }
 
@@ -60,6 +60,15 @@ mod tests {
         assert!(code_is_enabled(
             "CIT010",
             &[String::from("CIT010")],
+            &[],
+            false
+        ));
+
+        assert!(!code_is_enabled("CIT011", &[], &[], false));
+        assert!(code_is_enabled("CIT011", &[], &[], true));
+        assert!(code_is_enabled(
+            "CIT011",
+            &[String::from("CIT011")],
             &[],
             false
         ));

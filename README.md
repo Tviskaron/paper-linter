@@ -52,11 +52,14 @@ checked 1 file(s), 0 error(s), 1 warning(s)
 ```
 
 Current implementation status: the core CLI and rule pipeline are in place, with
-`CIT001`-`CIT009` citation checks and the first Structure & Formatting rules
+`CIT001`-`CIT011` citation checks and the first Structure & Formatting rules
 implemented:
 
-- `CIT001`-`CIT009`: citation and bibliography consistency/style checks, with
+- `CIT001`-`CIT011`: citation and bibliography consistency/style checks, with
   `.bbl` fallback for arXiv sources that omit `.bib` files.
+- `CIT009`-`CIT011`: opt-in or `--strict` citation style checks, including
+  collapsible citations, mixed citation command families, and canonical
+  bibliography keys such as `skrynnik2024learn`.
 - `FMT001`: missing final newline (opt-in or `--strict`).
 - `FMT002`: repeated blank lines (opt-in or `--strict`).
 - `ENV001`: environment begin/end mismatch.

@@ -281,6 +281,7 @@ pub fn check_project(
     diagnostics.extend(find_invalid_bibliography_metadata(&scoped_entries));
     diagnostics.extend(find_duplicate_keys(&scoped_entries));
     diagnostics.extend(find_similar_titles(&scoped_entries));
+    diagnostics.extend(find_non_canonical_bibliography_keys(&scoped_entries));
 
     Ok(diagnostics)
 }
@@ -660,6 +661,112 @@ fn find_duplicate_keys(entries: &[&BibEntry]) -> Vec<Diagnostic> {
     }
 
     diagnostics
+}
+
+fn find_non_canonical_bibliography_keys(entries: &[&BibEntry]) -> Vec<Diagnostic> {
+    let mut diagnostics = Vec::new();
+
+    for &entry in entries {
+        let Some(expected) = canonical_bibliography_key(entry) else {
+            continue;
+        };
+
+        if entry.key != expected {
+            diagnostics.push(
+                Diagnostic::new(
+                    "CIT011",
+                    Severity::Warning,
+                    format!(
+                        "bibliography key '{}' does not follow canonical key '{}'",
+                        entry.key, expected
+                    ),
+                    &entry.file,
+                    entry.line,
+                    entry.column,
+                )
+                .with_hint(format!(
+                    "rename '{}' and matching citations to '{}'",
+                    entry.key, expected
+                )),
+            );
+        }
+    }
+
+    diagnostics
+}
+
+fn canonical_bibliography_key(entry: &BibEntry) -> Option<String> {
+    let author = entry
+        .fields
+        .get("author")
+        .or_else(|| entry.fields.get("editor"))?;
+    let year = entry
+        .fields
+        .get("year")
+        .or_else(|| entry.fields.get("date"))
+        .and_then(|value| first_four_digit_year(value))?;
+    let title = entry.fields.get("title")?;
+
+    let surname = first_author_surname(author)?;
+    let title_word = first_title_word(title)?;
+
+    Some(format!("{surname}{year}{title_word}"))
+}
+
+fn first_four_digit_year(value: &str) -> Option<&str> {
+    value
+        .as_bytes()
+        .windows(4)
+        .position(|window| window.iter().all(u8::is_ascii_digit))
+        .map(|start| &value[start..start + 4])
+}
+
+fn first_author_surname(value: &str) -> Option<String> {
+    let first_author = value.split(" and ").next().unwrap_or(value);
+    let surname = first_author
+        .split_once(',')
+        .map(|(surname, _)| surname)
+        .unwrap_or_else(|| {
+            first_author
+                .split_whitespace()
+                .last()
+                .unwrap_or(first_author)
+        });
+
+    normalize_key_component(surname)
+}
+
+fn first_title_word(value: &str) -> Option<String> {
+    normalize_key_component(value)
+        .and_then(|normalized| normalized.split_whitespace().next().map(str::to_string))
+}
+
+fn normalize_key_component(value: &str) -> Option<String> {
+    let mut output = String::new();
+    let mut command = false;
+
+    for character in value.chars() {
+        if character == '\\' {
+            command = true;
+            continue;
+        }
+
+        if command {
+            if character.is_ascii_alphabetic() {
+                continue;
+            }
+            command = false;
+        }
+
+        if character.is_ascii_alphanumeric() {
+            output.push(character.to_ascii_lowercase());
+        } else if !output.ends_with(' ') {
+            output.push(' ');
+        }
+    }
+
+    let normalized = output.trim();
+    (!normalized.is_empty()).then(|| normalized.to_string())
 }
 
 fn find_duplicate_bibliography_declarations(
@@ -1130,10 +1237,10 @@ mod tests {
     use std::path::{Path, PathBuf};
 
     use super::{
-        bibtex::parse_bib_entries, find_duplicate_keys, is_citation_punctuation_exception,
-        is_valid_arxiv_id, is_valid_doi, is_valid_url, missing_required_fields,
-        scoped_bibliography_entries, should_skip_resolved_large_bib, BibSource,
-        LARGE_BIB_FAST_PATH_BYTES,
+        bibtex::parse_bib_entries, canonical_bibliography_key, find_duplicate_keys,
+        find_non_canonical_bibliography_keys, is_citation_punctuation_exception, is_valid_arxiv_id,
+        is_valid_doi, is_valid_url, missing_required_fields, scoped_bibliography_entries,
+        should_skip_resolved_large_bib, BibSource, LARGE_BIB_FAST_PATH_BYTES,
     };
 
     #[test]
@@ -1150,6 +1257,61 @@ mod tests {
         assert_eq!(diagnostics.len(), 1);
         assert_eq!(diagnostics[0].code, "CIT005");
         assert!(diagnostics[0].message.contains("first defined"));
+    }
+
+    #[test]
+    fn builds_google_scholar_style_bibliography_key() {
+        let entries = parse_bib_entries(
+            Path::new("refs.bib"),
+            r"@inproceedings{skrynnik2024learn,
+  title={Learn to follow: Decentralized lifelong multi-agent pathfinding via planning and learning},
+  author={Skrynnik, Alexey and Andreychuk, Anton and Nesterova, Maria},
+  booktitle={Proceedings of the AAAI conference on artificial intelligence},
+  year={2024}
+}",
+        );
+
+        assert_eq!(
+            canonical_bibliography_key(&entries[0]).as_deref(),
+            Some("skrynnik2024learn")
+        );
+    }
+
+    #[test]
+    fn detects_non_canonical_bibliography_keys() {
+        let entries = parse_bib_entries(
+            Path::new("refs.bib"),
+            r"@article{paper1, author={Jane Smith}, title={Efficient Planning}, journal={J}, year={2024}}",
+        );
+        let scoped_entries = entries.iter().collect::<Vec<_>>();
+        let diagnostics = find_non_canonical_bibliography_keys(&scoped_entries);
+
+        assert_eq!(diagnostics.len(), 1);
+        assert_eq!(diagnostics[0].code, "CIT011");
+        assert!(diagnostics[0]
+            .message
+            .contains("canonical key 'smith2024efficient'"));
+    }
+
+    #[test]
+    fn accepts_canonical_bibliography_keys() {
+        let entries = parse_bib_entries(
+            Path::new("refs.bib"),
+            r"@article{smith2024efficient, author={Jane Smith}, title={Efficient Planning}, journal={J}, year={2024}}",
+        );
+        let scoped_entries = entries.iter().collect::<Vec<_>>();
+
+        assert!(find_non_canonical_bibliography_keys(&scoped_entries).is_empty());
+    }
+
+    #[test]
+    fn skips_canonical_key_check_when_metadata_is_missing() {
+        let entries = parse_bib_entries(
+            Path::new("refs.bib"),
+            r"@article{paper1, author={Jane Smith}, journal={J}, year={2024}}",
+        );
+
+        assert!(canonical_bibliography_key(&entries[0]).is_none());
     }
 
     #[test]

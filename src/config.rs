@@ -1,0 +1,171 @@
+use std::collections::BTreeMap;
+use std::fs;
+use std::io;
+use std::path::{Path, PathBuf};
+
+use crate::diagnostic::Severity;
+use crate::rule_policy;
+
+#[derive(Debug, Clone, Default)]
+pub struct LinterConfig {
+    pub enable: Vec<String>,
+    pub disable: Vec<String>,
+    pub thresholds: BTreeMap<String, String>,
+    pub severity: BTreeMap<String, Severity>,
+}
+
+impl LinterConfig {
+    pub fn load(path: &Path) -> io::Result<Self> {
+        let content = fs::read_to_string(path)?;
+        parse_toml(&content)
+    }
+
+    pub fn load_preset(name: &str) -> io::Result<Self> {
+        let path = preset_path(name)?;
+        Self::load(&path)
+    }
+
+    pub fn merge_into_options(
+        &self,
+        select: &mut Vec<String>,
+        ignore: &mut Vec<String>,
+    ) {
+        for code in &self.enable {
+            if !select.iter().any(|existing| existing.starts_with(code)) {
+                select.push(code.clone());
+            }
+        }
+        for code in &self.disable {
+            if !ignore.iter().any(|existing| existing.starts_with(code)) {
+                ignore.push(code.clone());
+            }
+        }
+    }
+
+    pub fn threshold_usize(&self, key: &str, default: usize) -> usize {
+        self.thresholds
+            .get(key)
+            .and_then(|value| value.parse().ok())
+            .unwrap_or(default)
+    }
+}
+
+fn preset_path(name: &str) -> io::Result<PathBuf> {
+    let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let path = manifest_dir.join("presets").join(format!("{name}.toml"));
+    if path.is_file() {
+        Ok(path)
+    } else {
+        Err(io::Error::new(
+            io::ErrorKind::NotFound,
+            format!("preset not found: {name}"),
+        ))
+    }
+}
+
+fn parse_toml(content: &str) -> io::Result<LinterConfig> {
+    let mut config = LinterConfig::default();
+    let mut section = "";
+
+    for line in content.lines() {
+        let trimmed = line.trim();
+        if trimmed.is_empty() || trimmed.starts_with('#') {
+            continue;
+        }
+        if trimmed.starts_with('[') && trimmed.ends_with(']') {
+            section = trimmed.trim_matches(['[', ']']).trim();
+            continue;
+        }
+
+        let Some((key, value)) = trimmed.split_once('=') else {
+            continue;
+        };
+        let key = key.trim();
+        let value = parse_toml_value(value.trim());
+
+        match section {
+            "rules" if key == "enable" => {
+                config.enable = parse_string_list(&value);
+            }
+            "rules" if key == "disable" => {
+                config.disable = parse_string_list(&value);
+            }
+            "thresholds" => {
+                config.thresholds.insert(key.to_string(), value);
+            }
+            "severity" => {
+                if let Some(severity) = parse_severity(&value) {
+                    config.severity.insert(key.to_ascii_uppercase(), severity);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    Ok(config)
+}
+
+fn parse_toml_value(value: &str) -> String {
+    value.trim_matches('"').to_string()
+}
+
+fn parse_string_list(value: &str) -> Vec<String> {
+    value
+        .trim_matches(['[', ']'])
+        .split(',')
+        .map(|item| item.trim().trim_matches('"').to_string())
+        .filter(|item| !item.is_empty())
+        .collect()
+}
+
+fn parse_severity(value: &str) -> Option<Severity> {
+    match value.to_ascii_lowercase().as_str() {
+        "error" => Some(Severity::Error),
+        "warning" => Some(Severity::Warning),
+        _ => None,
+    }
+}
+
+pub fn apply_preset(
+    preset: Option<&str>,
+    select: &mut Vec<String>,
+    ignore: &mut Vec<String>,
+) -> io::Result<Option<LinterConfig>> {
+    if let Some(name) = preset {
+        let config = LinterConfig::load_preset(name)?;
+        config.merge_into_options(select, ignore);
+        return Ok(Some(config));
+    }
+    Ok(None)
+}
+
+pub fn is_enabled_with_config(
+    code: &str,
+    select: &[String],
+    ignore: &[String],
+    strict: bool,
+    config: &LinterConfig,
+) -> bool {
+    if config.disable.iter().any(|pattern| code.starts_with(pattern)) {
+        return false;
+    }
+    if config.enable.iter().any(|pattern| code.starts_with(pattern)) {
+        return rule_policy::code_is_enabled(code, select, ignore, strict) || select.is_empty();
+    }
+    rule_policy::code_is_enabled(code, select, ignore, strict)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::parse_toml;
+
+    #[test]
+    fn parses_enable_rules() {
+        let config = parse_toml(
+            "[rules]\nenable = [\"TXT003\", \"TXT004\"]\ndisable = [\"CIT002\"]\n",
+        )
+        .expect("parse");
+        assert_eq!(config.enable, vec!["TXT003", "TXT004"]);
+        assert_eq!(config.disable, vec!["CIT002"]);
+    }
+}

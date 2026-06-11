@@ -2,11 +2,16 @@ use std::fmt;
 use std::io;
 use std::path::PathBuf;
 
+use crate::baseline::{filter_baseline, load_baseline, update_baseline};
+use crate::config::LinterConfig;
 use crate::diagnostic::{Diagnostic, Severity};
 use crate::discovery::discover_tex_files;
 use crate::project::ProjectIndex;
+use crate::project_graph::ProjectGraph;
+use crate::rule_policy;
 use crate::rules::citations::{check_project, explicit_bib_files, SourceFile};
-use crate::rules::{all_project_rules, all_rules};
+use crate::rules::{all_graph_project_rules, all_project_rules, all_rules};
+use crate::suppressions::{apply_suppressions, SuppressionIndex};
 
 #[derive(Debug, Clone)]
 pub struct CheckOptions {
@@ -15,6 +20,24 @@ pub struct CheckOptions {
     pub ignore: Vec<String>,
     pub strict: bool,
     pub all_tex: bool,
+    pub baseline: Option<PathBuf>,
+    pub update_baseline: Option<PathBuf>,
+    pub config: LinterConfig,
+}
+
+impl Default for CheckOptions {
+    fn default() -> Self {
+        Self {
+            paths: Vec::new(),
+            select: Vec::new(),
+            ignore: Vec::new(),
+            strict: false,
+            all_tex: false,
+            baseline: None,
+            update_baseline: None,
+            config: LinterConfig::default(),
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -66,56 +89,105 @@ pub fn run_check(options: &CheckOptions) -> Result<CheckResult, ToolError> {
         .map_err(|source| ToolError::Io { path: None, source })?;
     let mut diagnostics = Vec::new();
 
-    if files.is_empty() {
+    if files.is_empty() && !ProjectGraph::should_analyze(&options.paths) {
         return Ok(CheckResult {
             diagnostics,
             files_checked: 0,
         });
     }
 
-    let project = ProjectIndex::build(&options.paths, &files)
-        .map_err(|source| ToolError::Io { path: None, source })?;
-    let mut sources = Vec::new();
+    let project = if files.is_empty() {
+        None
+    } else {
+        Some(
+            ProjectIndex::build(&options.paths, &files)
+                .map_err(|source| ToolError::Io { path: None, source })?,
+        )
+    };
 
-    for file in &project.files {
-        for rule in all_rules() {
-            if !code_is_enabled(rule.code(), &options.select, &options.ignore) {
+    let mut sources = Vec::new();
+    let suppression_files: Vec<(PathBuf, String)> = project
+        .as_ref()
+        .map(|project| {
+            project
+                .files
+                .iter()
+                .map(|file| (file.path.clone(), file.content.clone()))
+                .collect()
+        })
+        .unwrap_or_default();
+    let suppression_index = SuppressionIndex::from_files(&suppression_files);
+
+    if let Some(project) = &project {
+        for file in &project.files {
+            for rule in all_rules() {
+                if !code_is_enabled(rule.code(), options) {
+                    continue;
+                }
+
+                diagnostics.extend(rule.check_file(&file.path, &file.content));
+            }
+
+            sources.push(SourceFile {
+                path: file.path.clone(),
+                content: file.content.clone(),
+            });
+        }
+
+        for rule in all_project_rules() {
+            if !code_is_enabled(rule.code(), options) {
                 continue;
             }
 
-            diagnostics.extend(rule.check_file(&file.path, &file.content));
+            diagnostics.extend(rule.check_project(project));
         }
-
-        sources.push(SourceFile {
-            path: file.path.clone(),
-            content: file.content.clone(),
-        });
     }
 
-    for rule in all_project_rules() {
-        if !code_is_enabled(rule.code(), &options.select, &options.ignore) {
-            continue;
-        }
-
-        diagnostics.extend(rule.check_project(&project));
-    }
-
-    if family_may_be_enabled("CIT", &options.select, &options.ignore) {
+    if family_may_be_enabled("CIT", options) {
         let explicit_bibs = explicit_bib_files(&options.paths);
         let citation_diagnostics = check_project(&sources, &explicit_bibs)
             .map_err(|source| ToolError::Io { path: None, source })?;
         diagnostics.extend(citation_diagnostics);
     }
 
-    diagnostics
-        .retain(|diagnostic| code_is_enabled(diagnostic.code, &options.select, &options.ignore));
+    if ProjectGraph::should_analyze(&options.paths) {
+        let graphs = ProjectGraph::analyze_paths(&options.paths)
+            .map_err(|source| ToolError::Io { path: None, source })?;
+        for graph in graphs {
+            for rule in all_graph_project_rules() {
+                if !code_is_enabled(rule.code(), options) {
+                    continue;
+                }
+                diagnostics.extend(rule.check_graph(&graph));
+            }
+        }
+    }
+
+    diagnostics.retain(|diagnostic| code_is_enabled(diagnostic.code, options));
 
     if options.strict {
         for diagnostic in &mut diagnostics {
-            if diagnostic.severity == Severity::Warning {
+            if diagnostic.severity == Severity::Warning
+                && !rule_policy::never_promote_to_error(diagnostic.code)
+            {
                 diagnostic.severity = Severity::Error;
             }
         }
+    }
+
+    diagnostics = apply_suppressions(diagnostics, &suppression_index);
+
+    if let Some(path) = &options.baseline {
+        let baseline = load_baseline(path)
+            .map_err(|source| ToolError::Io { path: Some(path.clone()), source })?;
+        diagnostics = filter_baseline(diagnostics, &baseline);
+    }
+
+    if let Some(path) = &options.update_baseline {
+        update_baseline(path, &diagnostics).map_err(|source| ToolError::Io {
+            path: Some(path.clone()),
+            source,
+        })?;
     }
 
     diagnostics.sort_by(|left, right| {
@@ -128,48 +200,80 @@ pub fn run_check(options: &CheckOptions) -> Result<CheckResult, ToolError> {
 
     Ok(CheckResult {
         diagnostics,
-        files_checked: project.files.len(),
+        files_checked: project.as_ref().map(|project| project.files.len()).unwrap_or(0),
     })
 }
 
-fn code_is_enabled(code: &str, select: &[String], ignore: &[String]) -> bool {
-    let selected = select.is_empty() || select.iter().any(|pattern| code.starts_with(pattern));
-    let ignored = ignore.iter().any(|pattern| code.starts_with(pattern));
-    selected && !ignored
+fn code_is_enabled(code: &str, options: &CheckOptions) -> bool {
+    if options
+        .config
+        .disable
+        .iter()
+        .any(|pattern| code.starts_with(pattern))
+    {
+        return false;
+    }
+
+    if options
+        .config
+        .enable
+        .iter()
+        .any(|pattern| code.starts_with(pattern))
+    {
+        let ignored = options
+            .ignore
+            .iter()
+            .any(|pattern| code.starts_with(pattern));
+        return !ignored;
+    }
+
+    rule_policy::code_is_enabled(code, &options.select, &options.ignore, options.strict)
 }
 
-fn family_may_be_enabled(family: &str, select: &[String], ignore: &[String]) -> bool {
-    let selected = select.is_empty()
-        || select
+fn family_may_be_enabled(family: &str, options: &CheckOptions) -> bool {
+    let selected = options.select.is_empty()
+        || options
+            .select
             .iter()
-            .any(|pattern| family.starts_with(pattern) || pattern.starts_with(family));
-    let ignored = ignore.iter().any(|pattern| *pattern == family);
+            .any(|pattern| family.starts_with(pattern) || pattern.starts_with(family))
+        || options
+            .config
+            .enable
+            .iter()
+            .any(|pattern| pattern.starts_with(family));
+    let ignored = options.ignore.iter().any(|pattern| *pattern == family);
     selected && !ignored
 }
 
 #[cfg(test)]
 mod tests {
-    use super::code_is_enabled;
+    use super::{code_is_enabled, CheckOptions};
 
     #[test]
-    fn select_defaults_to_all_rules() {
-        assert!(code_is_enabled("WS001", &[], &[]));
-        assert!(code_is_enabled("FIG001", &[], &[]));
+    fn select_defaults_to_all_default_rules() {
+        let options = CheckOptions::default();
+        assert!(code_is_enabled("WS001", &options));
+        assert!(code_is_enabled("PRJ001", &options));
+        assert!(!code_is_enabled("TXT003", &options));
     }
 
     #[test]
     fn select_accepts_exact_codes_and_prefixes() {
-        assert!(code_is_enabled("WS001", &[String::from("WS001")], &[]));
-        assert!(code_is_enabled("WS001", &[String::from("WS")], &[]));
-        assert!(!code_is_enabled("WS001", &[String::from("CIT")], &[]));
+        let options = CheckOptions {
+            select: vec![String::from("WS001")],
+            ..CheckOptions::default()
+        };
+        assert!(code_is_enabled("WS001", &options));
+        assert!(!code_is_enabled("FIG001", &options));
     }
 
     #[test]
     fn ignore_is_applied_after_select() {
-        assert!(!code_is_enabled(
-            "WS001",
-            &[String::from("WS")],
-            &[String::from("WS001")]
-        ));
+        let options = CheckOptions {
+            select: vec![String::from("WS")],
+            ignore: vec![String::from("WS001")],
+            ..CheckOptions::default()
+        };
+        assert!(!code_is_enabled("WS001", &options));
     }
 }

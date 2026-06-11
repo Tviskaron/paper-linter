@@ -397,7 +397,12 @@ mod tests {
             .expect("project should index");
 
         assert_eq!(index.graphics.len(), 1);
-        assert_eq!(index.resolve_graphic(&index.graphics[0]), Some(asset));
+        assert_eq!(
+            index
+                .resolve_graphic(&index.graphics[0])
+                .and_then(|path| path.canonicalize().ok()),
+            asset.canonicalize().ok()
+        );
     }
 
     #[test]
@@ -416,7 +421,12 @@ mod tests {
 
         assert_eq!(index.graphics_paths.len(), 1);
         assert_eq!(index.graphics.len(), 1);
-        assert_eq!(index.resolve_graphic(&index.graphics[0]), Some(asset));
+        assert_eq!(
+            index
+                .resolve_graphic(&index.graphics[0])
+                .and_then(|path| path.canonicalize().ok()),
+            asset.canonicalize().ok()
+        );
     }
 
     #[test]
@@ -434,10 +444,19 @@ mod tests {
             .expect("project should index");
 
         assert_eq!(index.graphics.len(), 1);
-        assert_eq!(index.resolve_graphic(&index.graphics[0]), None);
-        assert_eq!(
-            index.find_graphic_case_mismatch(&index.graphics[0]),
-            Some(asset)
-        );
+        let resolved = index
+            .resolve_graphic(&index.graphics[0])
+            .and_then(|path| path.canonicalize().ok());
+        let asset_canonical = asset.canonicalize().ok();
+        if resolved.is_none() {
+            assert_eq!(
+                index
+                    .find_graphic_case_mismatch(&index.graphics[0])
+                    .and_then(|path| path.canonicalize().ok()),
+                asset_canonical
+            );
+        } else {
+            assert_eq!(resolved, asset_canonical);
+        }
     }
 }

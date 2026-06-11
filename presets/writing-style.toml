@@ -1,0 +1,9 @@
+[rules]
+enable = ["TXT003", "TXT004", "CMT001", "SEC001"]
+disable = ["CIT002", "PRJ004"]
+
+[thresholds]
+txt003_max_words = "35"
+
+[severity]
+txt004 = "warning"

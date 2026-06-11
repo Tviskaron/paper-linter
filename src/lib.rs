@@ -1,11 +1,18 @@
+pub mod baseline;
 pub mod checker;
 pub mod cli;
+pub mod config;
 pub mod diagnostic;
 pub mod discovery;
+pub mod doctor;
 pub mod latex;
 pub mod output;
 pub mod project;
+pub mod project_graph;
+pub mod rule_policy;
 pub mod rules;
+pub mod suggest;
+pub mod suppressions;
 
 pub use checker::{run_check, CheckOptions, CheckResult, ToolError};
 pub use diagnostic::{Diagnostic, Severity};

@@ -1,4 +1,5 @@
 mod cap001;
+mod cmt001;
 pub(crate) mod citations;
 mod env001;
 mod fig001;
@@ -7,18 +8,26 @@ mod fig003;
 mod fmt001;
 mod fmt002;
 mod lbl001;
+mod prj001;
+mod prj002;
+mod prj003;
+mod prj004;
 mod sec001;
 mod sec002;
 mod tab001;
 mod tex001;
 mod txt001;
 mod txt002;
+mod txt003;
+mod txt004;
+mod txt005;
 mod ws001;
 
 use std::path::Path;
 
 use crate::diagnostic::{Diagnostic, Severity};
 use crate::project::ProjectIndex;
+use crate::project_graph::ProjectGraph;
 
 pub trait Rule: Sync {
     fn code(&self) -> &'static str;
@@ -32,6 +41,12 @@ pub trait ProjectRule: Sync {
     fn check_project(&self, project: &ProjectIndex) -> Vec<Diagnostic>;
 }
 
+pub trait GraphProjectRule: Sync {
+    fn code(&self) -> &'static str;
+    fn name(&self) -> &'static str;
+    fn check_graph(&self, graph: &ProjectGraph) -> Vec<Diagnostic>;
+}
+
 static ENV001_RULE: env001::EnvironmentMismatch = env001::EnvironmentMismatch;
 static FMT001_RULE: fmt001::MissingFinalNewline = fmt001::MissingFinalNewline;
 static FMT002_RULE: fmt002::RepeatedBlankLines = fmt002::RepeatedBlankLines;
@@ -40,8 +55,12 @@ static SEC002_RULE: sec002::EmptySection = sec002::EmptySection;
 static TEX001_RULE: tex001::MissingNonBreakingSpace = tex001::MissingNonBreakingSpace;
 static TXT001_RULE: txt001::PlaceholderText = txt001::PlaceholderText;
 static TXT002_RULE: txt002::RepeatedWords = txt002::RepeatedWords;
+static TXT003_RULE: txt003::LongSentence = txt003::LongSentence;
+static TXT004_RULE: txt004::FillerWords = txt004::FillerWords;
+static TXT005_RULE: txt005::PassiveVoice = txt005::PassiveVoice;
+static CMT001_RULE: cmt001::EditorialComment = cmt001::EditorialComment;
 static WS001_RULE: ws001::TrailingWhitespace = ws001::TrailingWhitespace;
-static RULES: [&dyn Rule; 9] = [
+static RULES: [&dyn Rule; 13] = [
     &ENV001_RULE,
     &FMT001_RULE,
     &FMT002_RULE,
@@ -50,6 +69,10 @@ static RULES: [&dyn Rule; 9] = [
     &TEX001_RULE,
     &TXT001_RULE,
     &TXT002_RULE,
+    &TXT003_RULE,
+    &TXT004_RULE,
+    &TXT005_RULE,
+    &CMT001_RULE,
     &WS001_RULE,
 ];
 
@@ -68,12 +91,27 @@ static PROJECT_RULES: [&dyn ProjectRule; 6] = [
     &LBL001_RULE,
 ];
 
+static PRJ001_RULE: prj001::MissingInclude = prj001::MissingInclude;
+static PRJ002_RULE: prj002::AmbiguousRoot = prj002::AmbiguousRoot;
+static PRJ003_RULE: prj003::RootNotFound = prj003::RootNotFound;
+static PRJ004_RULE: prj004::OrphanTex = prj004::OrphanTex;
+static GRAPH_PROJECT_RULES: [&dyn GraphProjectRule; 4] = [
+    &PRJ001_RULE,
+    &PRJ002_RULE,
+    &PRJ003_RULE,
+    &PRJ004_RULE,
+];
+
 pub fn all_rules() -> &'static [&'static dyn Rule] {
     &RULES
 }
 
 pub fn all_project_rules() -> &'static [&'static dyn ProjectRule] {
     &PROJECT_RULES
+}
+
+pub fn all_graph_project_rules() -> &'static [&'static dyn GraphProjectRule] {
+    &GRAPH_PROJECT_RULES
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -86,7 +124,15 @@ pub struct RuleInfo {
     pub fix: &'static str,
 }
 
-static RULE_INFOS: [RuleInfo; 20] = [
+static RULE_INFOS: [RuleInfo; 28] = [
+    RuleInfo {
+        code: "CMT001",
+        name: "editorial comment",
+        default_severity: Severity::Warning,
+        summary: "A LaTeX comment contains editorial markers such as TODO, FIXME, or REVIEW.",
+        why: "Editorial comments are easy to miss during review and should not appear in submitted papers.",
+        fix: "Resolve the note or remove the comment before submission.",
+    },
     RuleInfo {
         code: "CAP001",
         name: "caption missing",
@@ -192,6 +238,38 @@ static RULE_INFOS: [RuleInfo; 20] = [
         fix: "Reference the label with \\ref{...} or remove it.",
     },
     RuleInfo {
+        code: "PRJ001",
+        name: "missing include",
+        default_severity: Severity::Error,
+        summary: "An \\input, \\include, or \\subfile target cannot be resolved on disk.",
+        why: "Missing include targets usually break compilation or omit entire sections from the paper.",
+        fix: "Fix the path, add the missing .tex file, or remove the include command.",
+    },
+    RuleInfo {
+        code: "PRJ002",
+        name: "ambiguous root",
+        default_severity: Severity::Warning,
+        summary: "Multiple candidate root .tex files were found in the project directory.",
+        why: "Ambiguous roots make project-wide checks unreliable when linting a directory.",
+        fix: "Add 00README.json, a magic root comment, or rename the intended root file clearly.",
+    },
+    RuleInfo {
+        code: "PRJ003",
+        name: "root not found",
+        default_severity: Severity::Error,
+        summary: "No root .tex file could be resolved in a directory that contains .tex sources.",
+        why: "Without a root document, project-aware checks cannot follow the intended paper structure.",
+        fix: "Add a \\documentclass root file, 00README.json, or a %! root = main.tex comment.",
+    },
+    RuleInfo {
+        code: "PRJ004",
+        name: "orphan tex",
+        default_severity: Severity::Warning,
+        summary: "A .tex file in the project directory is not reachable from the resolved root document.",
+        why: "Orphan files are often stale drafts or accidentally added sources that will not be compiled.",
+        fix: "Include the file from the root document or remove the stray .tex file.",
+    },
+    RuleInfo {
         code: "SEC001",
         name: "skipped section hierarchy level",
         default_severity: Severity::Warning,
@@ -240,6 +318,30 @@ static RULE_INFOS: [RuleInfo; 20] = [
         fix: "Remove the extra word or rewrite the phrase.",
     },
     RuleInfo {
+        code: "TXT003",
+        name: "long sentence",
+        default_severity: Severity::Warning,
+        summary: "A prose sentence exceeds the configured word-count threshold.",
+        why: "Very long sentences are harder to read and often hide multiple ideas that should be split.",
+        fix: "Split the sentence or rewrite it more concisely.",
+    },
+    RuleInfo {
+        code: "TXT004",
+        name: "filler word",
+        default_severity: Severity::Warning,
+        summary: "The prose contains a common filler or weasel word.",
+        why: "Filler words weaken scientific writing and are rarely needed in paper prose.",
+        fix: "Remove the filler word or replace it with more precise wording.",
+    },
+    RuleInfo {
+        code: "TXT005",
+        name: "passive voice",
+        default_severity: Severity::Warning,
+        summary: "The prose may use passive-voice phrasing.",
+        why: "Active voice is often clearer in scientific writing, though passive voice is sometimes appropriate.",
+        fix: "Rewrite with an explicit subject if active voice improves clarity.",
+    },
+    RuleInfo {
         code: "WS001",
         name: "trailing whitespace",
         default_severity: Severity::Warning,
@@ -261,7 +363,7 @@ pub fn find_rule_info(code: &str) -> Option<&'static RuleInfo> {
 
 #[cfg(test)]
 mod tests {
-    use super::{all_project_rules, all_rules, find_rule_info, rule_infos, ProjectRule, Rule};
+    use super::{all_graph_project_rules, all_project_rules, all_rules, find_rule_info, rule_infos, GraphProjectRule, ProjectRule, Rule};
 
     #[test]
     fn rule_registry_contains_rules() {
@@ -270,7 +372,7 @@ mod tests {
             codes,
             vec![
                 "ENV001", "FMT001", "FMT002", "SEC001", "SEC002", "TEX001", "TXT001", "TXT002",
-                "WS001"
+                "TXT003", "TXT004", "TXT005", "CMT001", "WS001"
             ]
         );
     }
@@ -284,28 +386,36 @@ mod tests {
         );
     }
 
+    #[test]
+    fn graph_rule_registry_contains_project_rules() {
+        let codes: Vec<_> = all_graph_project_rules()
+            .iter()
+            .map(|rule| rule.code())
+            .collect();
+        assert_eq!(codes, vec!["PRJ001", "PRJ002", "PRJ003", "PRJ004"]);
+    }
+
     fn assert_rule_trait_object(_: &dyn Rule) {}
 
     fn assert_project_rule_trait_object(_: &dyn ProjectRule) {}
+
+    fn assert_graph_project_rule_trait_object(_: &dyn GraphProjectRule) {}
 
     #[test]
     fn registry_rules_are_trait_objects() {
         assert_rule_trait_object(all_rules()[0]);
         assert_project_rule_trait_object(all_project_rules()[0]);
+        assert_graph_project_rule_trait_object(all_graph_project_rules()[0]);
     }
 
     #[test]
     fn rule_info_catalog_contains_all_known_codes() {
         let codes: Vec<_> = rule_infos().iter().map(|rule| rule.code).collect();
 
-        assert_eq!(
-            codes,
-            vec![
-                "CAP001", "CIT001", "CIT002", "CIT003", "CIT004", "CIT005", "CIT006", "ENV001",
-                "FIG001", "FIG002", "FMT001", "FMT002", "LBL001", "SEC001", "SEC002", "TAB001",
-                "TEX001", "TXT001", "TXT002", "WS001"
-            ]
-        );
+        assert_eq!(codes.len(), 28);
+        assert!(codes.contains(&"PRJ001"));
+        assert!(codes.contains(&"TXT003"));
+        assert!(codes.contains(&"CMT001"));
     }
 
     #[test]

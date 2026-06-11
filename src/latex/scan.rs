@@ -77,6 +77,7 @@ pub struct GraphicsPath {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Caption {
+    pub text: String,
     pub location: SourceLocation,
 }
 
@@ -222,8 +223,8 @@ pub fn scan_latex(file: impl Into<PathBuf>, content: &str) -> ScanResult {
             }
             "caption" => {
                 let arg_start = skip_optional_args(content, after_command);
-                if let Some((_text, end)) = parse_required_arg(content, arg_start) {
-                    let caption = Caption { location };
+                if let Some((text, end)) = parse_required_arg(content, arg_start) {
+                    let caption = Caption { text, location };
                     attach_caption(&mut stack, caption.clone());
                     index = end;
                 } else {
@@ -600,6 +601,7 @@ mod tests {
         assert_eq!(scan.floats[0].kind, FloatKind::Figure);
         assert_eq!(scan.floats[0].graphics[0].raw_path, "figures/model");
         assert_eq!(scan.floats[0].captions.len(), 1);
+        assert_eq!(scan.floats[0].captions[0].text, "Long");
         assert_eq!(scan.floats[0].labels[0].key, "fig:model");
         assert_eq!(scan.labels[0].kind, LabelKind::Figure);
     }

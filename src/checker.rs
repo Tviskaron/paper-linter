@@ -93,7 +93,13 @@ pub fn run_check(options: &CheckOptions) -> Result<CheckResult, ToolError> {
 
     for file in &project.files {
         for rule in all_rules() {
-            if !code_is_enabled(rule.code(), &options.select, &options.ignore) {
+            if !rule_is_enabled(
+                rule.code(),
+                rule.strict_only(),
+                options.strict,
+                &options.select,
+                &options.ignore,
+            ) {
                 continue;
             }
 
@@ -107,7 +113,13 @@ pub fn run_check(options: &CheckOptions) -> Result<CheckResult, ToolError> {
     }
 
     for rule in all_project_rules() {
-        if !code_is_enabled(rule.code(), &options.select, &options.ignore) {
+        if !rule_is_enabled(
+            rule.code(),
+            rule.strict_only(),
+            options.strict,
+            &options.select,
+            &options.ignore,
+        ) {
             continue;
         }
 
@@ -163,6 +175,20 @@ fn code_is_enabled(code: &str, select: &[String], ignore: &[String]) -> bool {
     selected && !ignored
 }
 
+fn rule_is_enabled(
+    code: &str,
+    strict_only: bool,
+    strict: bool,
+    select: &[String],
+    ignore: &[String],
+) -> bool {
+    if !code_is_enabled(code, select, ignore) {
+        return false;
+    }
+
+    !strict_only || strict || !select.is_empty()
+}
+
 fn family_may_be_enabled(family: &str, select: &[String], ignore: &[String]) -> bool {
     let selected = select.is_empty()
         || select
@@ -174,7 +200,7 @@ fn family_may_be_enabled(family: &str, select: &[String], ignore: &[String]) -> 
 
 #[cfg(test)]
 mod tests {
-    use super::code_is_enabled;
+    use super::{code_is_enabled, rule_is_enabled};
 
     #[test]
     fn select_defaults_to_all_rules() {
@@ -196,5 +222,18 @@ mod tests {
             &[String::from("WS")],
             &[String::from("WS001")]
         ));
+    }
+
+    #[test]
+    fn strict_only_rules_require_strict_or_explicit_select() {
+        assert!(!rule_is_enabled("CAP002", true, false, &[], &[]));
+        assert!(rule_is_enabled(
+            "CAP002",
+            true,
+            false,
+            &[String::from("CAP002")],
+            &[]
+        ));
+        assert!(rule_is_enabled("CAP002", true, true, &[], &[]));
     }
 }

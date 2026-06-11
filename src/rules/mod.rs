@@ -1,4 +1,5 @@
 mod cap001;
+mod cap002;
 pub(crate) mod citations;
 mod env001;
 mod fig001;
@@ -28,12 +29,20 @@ pub trait Rule: Sync {
     fn code(&self) -> &'static str;
     fn name(&self) -> &'static str;
     fn check_file(&self, path: &Path, content: &str) -> Vec<Diagnostic>;
+
+    fn strict_only(&self) -> bool {
+        false
+    }
 }
 
 pub trait ProjectRule: Sync {
     fn code(&self) -> &'static str;
     fn name(&self) -> &'static str;
     fn check_project(&self, project: &ProjectIndex) -> Vec<Diagnostic>;
+
+    fn strict_only(&self) -> bool {
+        false
+    }
 }
 
 static ENV001_RULE: env001::EnvironmentMismatch = env001::EnvironmentMismatch;
@@ -59,6 +68,7 @@ static RULES: [&dyn Rule; 9] = [
 
 static FIG001_RULE: fig001::MissingAsset = fig001::MissingAsset;
 static CAP001_RULE: cap001::MissingCaption = cap001::MissingCaption;
+static CAP002_RULE: cap002::CaptionPunctuation = cap002::CaptionPunctuation;
 static FIG002_RULE: fig002::OrphanFigure = fig002::OrphanFigure;
 static FIG003_RULE: fig003::AssetCaseMismatch = fig003::AssetCaseMismatch;
 static FIG004_RULE: fig004::MissingFigureLabel = fig004::MissingFigureLabel;
@@ -67,9 +77,10 @@ static TAB001_RULE: tab001::OrphanTable = tab001::OrphanTable;
 static TAB002_RULE: tab002::MissingTableLabel = tab002::MissingTableLabel;
 static LBL001_RULE: lbl001::UnusedLabel = lbl001::UnusedLabel;
 static REF001_RULE: ref001::MissingReferenceTarget = ref001::MissingReferenceTarget;
-static PROJECT_RULES: [&dyn ProjectRule; 10] = [
+static PROJECT_RULES: [&dyn ProjectRule; 11] = [
     &FIG001_RULE,
     &CAP001_RULE,
+    &CAP002_RULE,
     &FIG002_RULE,
     &FIG003_RULE,
     &FIG004_RULE,
@@ -98,7 +109,7 @@ pub struct RuleInfo {
     pub fix: &'static str,
 }
 
-static RULE_INFOS: [RuleInfo; 25] = [
+static RULE_INFOS: [RuleInfo; 26] = [
     RuleInfo {
         code: "CAP001",
         name: "caption missing",
@@ -106,6 +117,14 @@ static RULE_INFOS: [RuleInfo; 25] = [
         summary: "A figure or table float has no caption.",
         why: "Captions make floats understandable on their own and are required by most paper styles.",
         fix: "Add a \\caption{...} inside the float.",
+    },
+    RuleInfo {
+        code: "CAP002",
+        name: "caption punctuation",
+        default_severity: Severity::Warning,
+        summary: "A figure or table caption does not end with sentence punctuation.",
+        why: "Some venues and paper style guides expect captions to read as complete punctuated sentences.",
+        fix: "End the caption with '.', '?', or '!'.",
     },
     RuleInfo {
         code: "CIT001",
@@ -333,8 +352,8 @@ mod tests {
         assert_eq!(
             codes,
             vec![
-                "FIG001", "CAP001", "FIG002", "FIG003", "FIG004", "FIG005", "TAB001", "TAB002",
-                "REF001", "LBL001"
+                "FIG001", "CAP001", "CAP002", "FIG002", "FIG003", "FIG004", "FIG005", "TAB001",
+                "TAB002", "REF001", "LBL001"
             ]
         );
     }
@@ -356,10 +375,10 @@ mod tests {
         assert_eq!(
             codes,
             vec![
-                "CAP001", "CIT001", "CIT002", "CIT003", "CIT004", "CIT005", "CIT006", "ENV001",
-                "FIG001", "FIG002", "FIG003", "FIG004", "FIG005", "FMT001", "FMT002", "LBL001",
-                "REF001", "SEC001", "SEC002", "TAB001", "TAB002", "TEX001", "TXT001", "TXT002",
-                "WS001"
+                "CAP001", "CAP002", "CIT001", "CIT002", "CIT003", "CIT004", "CIT005", "CIT006",
+                "ENV001", "FIG001", "FIG002", "FIG003", "FIG004", "FIG005", "FMT001", "FMT002",
+                "LBL001", "REF001", "SEC001", "SEC002", "TAB001", "TAB002", "TEX001", "TXT001",
+                "TXT002", "WS001"
             ]
         );
     }

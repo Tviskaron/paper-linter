@@ -92,6 +92,7 @@ pub fn check_project(
     ));
     diagnostics.extend(find_citation_punctuation(&citations, tex_files));
     diagnostics.extend(find_collapsible_citations(&citations, tex_files));
+    diagnostics.extend(find_mixed_citation_command_families(&citations));
 
     let bib_paths = bibliography_paths(&declarations, explicit_bib_files);
     let mut bbl_keys = HashSet::new();
@@ -801,6 +802,78 @@ fn find_collapsible_citations(
     }
 
     diagnostics
+}
+
+fn find_mixed_citation_command_families(citations: &[CitationUse]) -> Vec<Diagnostic> {
+    let mut commands = unique_citation_commands(citations);
+    commands.sort_by(|left, right| {
+        left.file
+            .cmp(&right.file)
+            .then(left.command_start.cmp(&right.command_start))
+    });
+
+    let mut first_by_family: HashMap<CitationCommandFamily, CitationCommandUse> = HashMap::new();
+
+    for command in commands {
+        let Some(family) = citation_command_family(&command.command) else {
+            continue;
+        };
+
+        if let Some((other_family, first)) = first_by_family
+            .iter()
+            .find(|(other_family, _)| **other_family != family)
+        {
+            return vec![Diagnostic::new(
+                "CIT010",
+                Severity::Warning,
+                format!(
+                    "mixed citation command families: {} '\\{}' and {} '\\{}'",
+                    other_family.name(),
+                    first.command,
+                    family.name(),
+                    command.command
+                ),
+                &command.file,
+                command.line,
+                command.column,
+            )
+            .with_hint("use one citation package command family consistently")];
+        }
+
+        first_by_family.entry(family).or_insert(command);
+    }
+
+    Vec::new()
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+enum CitationCommandFamily {
+    Natbib,
+    Biblatex,
+}
+
+impl CitationCommandFamily {
+    fn name(self) -> &'static str {
+        match self {
+            CitationCommandFamily::Natbib => "natbib",
+            CitationCommandFamily::Biblatex => "biblatex",
+        }
+    }
+}
+
+fn citation_command_family(command: &str) -> Option<CitationCommandFamily> {
+    match command {
+        "citep" | "Citep" | "citealp" | "citealt" | "citet" | "Citet" | "citeyearpar" => {
+            Some(CitationCommandFamily::Natbib)
+        }
+        "parencite" | "Parencite" | "parencites" | "Parencites" | "textcite" | "Textcite"
+        | "textcites" | "Textcites" | "autocite" | "Autocite" | "autocites" | "Autocites"
+        | "smartcite" | "Smartcite" | "smartcites" | "Smartcites" | "footcite" | "Footcite"
+        | "footcites" | "supercite" | "Supercite" | "supercites" => {
+            Some(CitationCommandFamily::Biblatex)
+        }
+        _ => None,
+    }
 }
 
 #[derive(Debug, Clone)]

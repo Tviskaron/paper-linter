@@ -3,7 +3,7 @@ pub fn enabled_by_default(code: &str) -> bool {
 }
 
 pub fn strict_only(code: &str) -> bool {
-    matches!(code, "TXT005" | "PRJ005")
+    matches!(code, "CIT010" | "TXT005" | "PRJ005")
 }
 
 pub fn never_promote_to_error(code: &str) -> bool {
@@ -37,6 +37,15 @@ mod tests {
 
     #[test]
     fn strict_only_rules_need_strict_or_select() {
+        assert!(!code_is_enabled("CIT010", &[], &[], false));
+        assert!(code_is_enabled("CIT010", &[], &[], true));
+        assert!(code_is_enabled(
+            "CIT010",
+            &[String::from("CIT010")],
+            &[],
+            false
+        ));
+
         assert!(!code_is_enabled("TXT005", &[], &[], false));
         assert!(code_is_enabled("TXT005", &[], &[], true));
         assert!(code_is_enabled(

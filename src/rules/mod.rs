@@ -164,7 +164,7 @@ pub struct RuleInfo {
     pub fix: &'static str,
 }
 
-static RULE_INFOS: [RuleInfo; 45] = [
+static RULE_INFOS: [RuleInfo; 46] = [
     RuleInfo {
         code: "CMT001",
         name: "editorial comment",
@@ -268,6 +268,14 @@ static RULE_INFOS: [RuleInfo; 45] = [
         summary: "Adjacent compatible citation commands can be collapsed into one command.",
         why: "Merged citations are shorter, easier to edit, and usually render more cleanly.",
         fix: "Merge adjacent citations with the same command, for example \\cite{a,b}.",
+    },
+    RuleInfo {
+        code: "CIT010",
+        name: "mixed citation command families",
+        default_severity: Severity::Warning,
+        summary: "A document mixes explicit natbib-style and biblatex-style citation commands.",
+        why: "Mixing citation command families often comes from merged drafts and can make citation style package-dependent.",
+        fix: "Use one citation package command family consistently.",
     },
     RuleInfo {
         code: "ENV001",
@@ -599,11 +607,11 @@ mod tests {
             codes,
             vec![
                 "CMT001", "CAP001", "CAP002", "BIB001", "CIT001", "CIT002", "CIT003", "CIT004",
-                "CIT005", "CIT006", "CIT007", "CIT008", "CIT009", "ENV001", "FIG001", "FIG002",
-                "FIG003", "FIG004", "FIG005", "FIG006", "FMT001", "FMT002", "LBL001", "LAT001",
-                "LAT002", "MTH001", "MTH002", "PRJ001", "PRJ002", "PRJ003", "PRJ004", "REF001",
-                "SEC001", "SEC002", "SEC003", "SEC004", "TAB001", "TAB002", "TEX001", "TXT001",
-                "TXT002", "TXT003", "TXT004", "TXT005", "WS001"
+                "CIT005", "CIT006", "CIT007", "CIT008", "CIT009", "CIT010", "ENV001", "FIG001",
+                "FIG002", "FIG003", "FIG004", "FIG005", "FIG006", "FMT001", "FMT002", "LBL001",
+                "LAT001", "LAT002", "MTH001", "MTH002", "PRJ001", "PRJ002", "PRJ003", "PRJ004",
+                "REF001", "SEC001", "SEC002", "SEC003", "SEC004", "TAB001", "TAB002", "TEX001",
+                "TXT001", "TXT002", "TXT003", "TXT004", "TXT005", "WS001"
             ]
         );
     }

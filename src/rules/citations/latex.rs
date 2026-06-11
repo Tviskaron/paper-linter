@@ -1,5 +1,7 @@
 use std::path::Path;
 
+use crate::latex::scan::ScanAliases;
+
 use super::syntax::{balanced_group_end, skip_ascii_whitespace};
 use super::{BibliographyDecl, CitationKind, CitationUse};
 
@@ -17,7 +19,11 @@ struct CommandArguments {
     end: usize,
 }
 
-pub(super) fn find_citations(path: &Path, content: &str) -> Vec<CitationUse> {
+pub(super) fn find_citations(
+    path: &Path,
+    content: &str,
+    aliases: &ScanAliases,
+) -> Vec<CitationUse> {
     let mut citations = Vec::new();
     let mut verbatim_depth = 0usize;
     let mut line_start_offset = 0usize;
@@ -41,7 +47,13 @@ pub(super) fn find_citations(path: &Path, content: &str) -> Vec<CitationUse> {
                 continue;
             };
 
-            let Some(kind) = citation_kind(command.name) else {
+            let Some(kind) = citation_kind(command.name).or_else(|| {
+                aliases
+                    .cites
+                    .iter()
+                    .any(|alias| alias == command.name)
+                    .then_some(CitationKind::Neutral)
+            }) else {
                 offset = command.after_name;
                 continue;
             };
@@ -688,14 +700,16 @@ mod tests {
     use std::path::Path;
 
     use super::{find_bibliographies, find_citations};
+    use crate::latex::scan::ScanAliases;
     use crate::rules::citations::BibliographyDecl;
+
+    fn citations(content: &str) -> Vec<super::CitationUse> {
+        find_citations(Path::new("paper.tex"), content, &ScanAliases::default())
+    }
 
     #[test]
     fn finds_citations_with_optional_args_and_multiple_keys() {
-        let citations = find_citations(
-            Path::new("paper.tex"),
-            r"\citep[see][p. 3]{alpha, beta} and \citet*{gamma}",
-        );
+        let citations = citations(r"\citep[see][p. 3]{alpha, beta} and \citet*{gamma}");
 
         let keys: Vec<_> = citations
             .iter()
@@ -712,8 +726,7 @@ mod tests {
 
     #[test]
     fn finds_biblatex_plural_and_volume_citations() {
-        let citations = find_citations(
-            Path::new("paper.tex"),
+        let citations = citations(
             r"\Cites{alpha}{beta} \parencites{gamma}{delta} \volcite{2}[45]{epsilon} \citeurl{zeta}",
         );
 
@@ -734,10 +747,7 @@ mod tests {
 
     #[test]
     fn ignores_commented_citations_but_not_escaped_percent() {
-        let citations = find_citations(
-            Path::new("paper.tex"),
-            r"shown as 5\% in \cite{real} % \cite{commented}",
-        );
+        let citations = citations(r"shown as 5\% in \cite{real} % \cite{commented}");
 
         assert_eq!(citations.len(), 1);
         assert_eq!(citations[0].key, "real");
@@ -745,7 +755,7 @@ mod tests {
 
     #[test]
     fn marks_nocite_keys() {
-        let citations = find_citations(Path::new("paper.tex"), r"\nocite{*}");
+        let citations = citations(r"\nocite{*}");
 
         assert_eq!(citations.len(), 1);
         assert!(citations[0].is_nocite);
@@ -754,10 +764,7 @@ mod tests {
 
     #[test]
     fn ignores_macro_parameter_citation_keys() {
-        let citations = find_citations(
-            Path::new("paper.tex"),
-            r"\newcommand{\mycite}[1]{\cite{#1}} \cite{real}",
-        );
+        let citations = citations(r"\newcommand{\mycite}[1]{\cite{#1}} \cite{real}");
 
         assert_eq!(citations.len(), 1);
         assert_eq!(citations[0].key, "real");
@@ -765,10 +772,7 @@ mod tests {
 
     #[test]
     fn does_not_treat_following_braced_text_as_citation_keys() {
-        let citations = find_citations(
-            Path::new("paper.tex"),
-            r"\citep{wagner2021improving} {propose DIPOLE, an approach.}",
-        );
+        let citations = citations(r"\citep{wagner2021improving} {propose DIPOLE, an approach.}");
 
         assert_eq!(citations.len(), 1);
         assert_eq!(citations[0].key, "wagner2021improving");
@@ -776,10 +780,8 @@ mod tests {
 
     #[test]
     fn ignores_citations_inside_verbatim_environments() {
-        let citations = find_citations(
-            Path::new("paper.tex"),
-            "\\begin{verbatim}\n\\cite{example}\n\\end{verbatim}\n\\cite{real}",
-        );
+        let citations =
+            citations("\\begin{verbatim}\n\\cite{example}\n\\end{verbatim}\n\\cite{real}");
 
         assert_eq!(citations.len(), 1);
         assert_eq!(citations[0].key, "real");

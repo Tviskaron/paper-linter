@@ -139,6 +139,23 @@ pub struct ScanResult {
     pub document_end: Option<SourceLocation>,
 }
 
+#[derive(Debug, Clone, Default, Deserialize, PartialEq, Eq, Serialize)]
+pub struct ScanAliases {
+    pub cites: Vec<String>,
+    pub refs: Vec<String>,
+    pub inputs: Vec<String>,
+    pub graphics: Vec<String>,
+}
+
+impl ScanAliases {
+    pub fn merge_missing(&mut self, other: &Self) {
+        append_missing(&mut self.cites, &other.cites);
+        append_missing(&mut self.refs, &other.refs);
+        append_missing(&mut self.inputs, &other.inputs);
+        append_missing(&mut self.graphics, &other.graphics);
+    }
+}
+
 #[derive(Debug, Clone)]
 struct ActiveEnv {
     env_name: String,
@@ -157,6 +174,14 @@ struct LabelMacro {
 }
 
 pub fn scan_latex(file: impl Into<PathBuf>, content: &str) -> ScanResult {
+    scan_latex_with_aliases(file, content, &ScanAliases::default())
+}
+
+pub fn scan_latex_with_aliases(
+    file: impl Into<PathBuf>,
+    content: &str,
+    aliases: &ScanAliases,
+) -> ScanResult {
     let file = file.into();
     let bytes = content.as_bytes();
     let line_starts = line_starts(content);
@@ -221,7 +246,9 @@ pub fn scan_latex(file: impl Into<PathBuf>, content: &str) -> ScanResult {
             _ if in_ignored => {
                 index = after_command;
             }
-            "includegraphics" => {
+            command_name
+                if command_name == "includegraphics" || aliases.matches_graphic(command_name) =>
+            {
                 let arg_start = skip_optional_args(content, after_command);
                 if let Some((raw_path, end)) = parse_required_arg(content, arg_start) {
                     let graphic = Graphic { raw_path, location };
@@ -285,7 +312,7 @@ pub fn scan_latex(file: impl Into<PathBuf>, content: &str) -> ScanResult {
                     index = after_command;
                 }
             }
-            "ref" | "autoref" | "cref" | "Cref" | "pageref" | "nameref" => {
+            command_name if is_ref_command(command_name) || aliases.matches_ref(command_name) => {
                 if let Some((keys, end)) = parse_required_arg(content, after_command) {
                     for key in keys.split(',').map(str::trim).filter(|key| !key.is_empty()) {
                         result.refs.push(Ref {
@@ -317,7 +344,9 @@ pub fn scan_latex(file: impl Into<PathBuf>, content: &str) -> ScanResult {
                 )
                 .unwrap_or(after_command);
             }
-            "input" | "include" => {
+            command_name
+                if is_input_command(command_name) || aliases.matches_input(command_name) =>
+            {
                 if let Some((raw_path, end)) = parse_include_arg(content, after_command) {
                     result.includes.push(Include { raw_path, location });
                     index = end;
@@ -386,6 +415,39 @@ pub fn scan_latex(file: impl Into<PathBuf>, content: &str) -> ScanResult {
     }
 
     result
+}
+
+impl ScanAliases {
+    fn matches_ref(&self, command: &str) -> bool {
+        self.refs.iter().any(|alias| alias == command)
+    }
+
+    fn matches_input(&self, command: &str) -> bool {
+        self.inputs.iter().any(|alias| alias == command)
+    }
+
+    fn matches_graphic(&self, command: &str) -> bool {
+        self.graphics.iter().any(|alias| alias == command)
+    }
+}
+
+fn is_ref_command(command: &str) -> bool {
+    matches!(
+        command,
+        "ref" | "autoref" | "cref" | "Cref" | "pageref" | "nameref"
+    )
+}
+
+fn is_input_command(command: &str) -> bool {
+    matches!(command, "input" | "include")
+}
+
+fn append_missing(target: &mut Vec<String>, source: &[String]) {
+    for item in source {
+        if !target.contains(item) {
+            target.push(item.clone());
+        }
+    }
 }
 
 fn finish_env(env: ActiveEnv, result: &mut ScanResult) {

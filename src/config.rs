@@ -4,6 +4,7 @@ use std::io;
 use std::path::{Path, PathBuf};
 
 use crate::diagnostic::Severity;
+use crate::latex::scan::ScanAliases;
 use crate::rule_policy;
 
 #[derive(Debug, Clone, Default)]
@@ -12,6 +13,8 @@ pub struct LinterConfig {
     pub disable: Vec<String>,
     pub thresholds: BTreeMap<String, String>,
     pub severity: BTreeMap<String, Severity>,
+    pub aliases: ScanAliases,
+    pub bibliography_forbidden_fields: Vec<String>,
 }
 
 impl LinterConfig {
@@ -94,6 +97,24 @@ fn parse_toml(content: &str) -> io::Result<LinterConfig> {
                     config.severity.insert(key.to_ascii_uppercase(), severity);
                 }
             }
+            "aliases" if matches!(key, "cite" | "cites") => {
+                config.aliases.cites = parse_string_list(&value);
+            }
+            "aliases" if matches!(key, "ref" | "refs") => {
+                config.aliases.refs = parse_string_list(&value);
+            }
+            "aliases" if matches!(key, "input" | "inputs") => {
+                config.aliases.inputs = parse_string_list(&value);
+            }
+            "aliases" if matches!(key, "graphic" | "graphics") => {
+                config.aliases.graphics = parse_string_list(&value);
+            }
+            "bibliography" if key == "forbidden_fields" => {
+                config.bibliography_forbidden_fields = parse_string_list(&value)
+                    .into_iter()
+                    .map(|field| field.to_ascii_lowercase())
+                    .collect();
+            }
             _ => {}
         }
     }
@@ -119,6 +140,14 @@ fn parse_severity(value: &str) -> Option<Severity> {
         "error" => Some(Severity::Error),
         "warning" => Some(Severity::Warning),
         _ => None,
+    }
+}
+
+pub fn append_missing(target: &mut Vec<String>, source: &[String]) {
+    for item in source {
+        if !target.contains(item) {
+            target.push(item.clone());
+        }
     }
 }
 
@@ -170,5 +199,30 @@ mod tests {
                 .expect("parse");
         assert_eq!(config.enable, vec!["TXT003", "TXT004"]);
         assert_eq!(config.disable, vec!["CIT002"]);
+    }
+
+    #[test]
+    fn parses_command_aliases() {
+        let config = parse_toml(
+            "[aliases]\ncite = [\"mycite\"]\nref = [\"figref\"]\ninput = [\"subfile\"]\ngraphic = [\"plotfile\"]\n",
+        )
+        .expect("parse");
+
+        assert_eq!(config.aliases.cites, vec!["mycite"]);
+        assert_eq!(config.aliases.refs, vec!["figref"]);
+        assert_eq!(config.aliases.inputs, vec!["subfile"]);
+        assert_eq!(config.aliases.graphics, vec!["plotfile"]);
+    }
+
+    #[test]
+    fn parses_bibliography_forbidden_fields() {
+        let config =
+            parse_toml("[bibliography]\nforbidden_fields = [\"abstract\", \"Keywords\"]\n")
+                .expect("parse");
+
+        assert_eq!(
+            config.bibliography_forbidden_fields,
+            vec!["abstract", "keywords"]
+        );
     }
 }

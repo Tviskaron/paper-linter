@@ -1,6 +1,6 @@
 use std::fs;
 use std::io;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use crate::discovery::discover_tex_files;
 
@@ -37,7 +37,7 @@ pub struct FormatChange {
 }
 
 pub fn run_format(options: &FormatOptions) -> io::Result<FormatResult> {
-    let files = discover_tex_files(&options.paths, true)?;
+    let files = discover_format_files(&options.paths)?;
     let mut changes = Vec::new();
 
     for path in &files {
@@ -62,6 +62,24 @@ pub fn run_format(options: &FormatOptions) -> io::Result<FormatResult> {
         files_checked: files.len(),
         changes,
     })
+}
+
+fn discover_format_files(paths: &[PathBuf]) -> io::Result<Vec<PathBuf>> {
+    let mut files = discover_tex_files(paths, true)?;
+    for path in paths {
+        if path.is_file() && is_bib_file(path) && !files.contains(path) {
+            files.push(path.clone());
+        }
+    }
+    files.sort();
+    files.dedup();
+    Ok(files)
+}
+
+fn is_bib_file(path: &Path) -> bool {
+    path.extension()
+        .and_then(|extension| extension.to_str())
+        .is_some_and(|extension| extension.eq_ignore_ascii_case("bib"))
 }
 
 pub fn render_format_text(result: &FormatResult, mode: FormatMode) -> String {

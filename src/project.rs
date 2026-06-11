@@ -6,8 +6,8 @@ use std::path::{Path, PathBuf};
 use serde::{Deserialize, Serialize};
 
 use crate::latex::scan::{
-    scan_latex, BibliographyDecl, DocumentClass, FloatEnv, Graphic, GraphicsPath, Include, Label,
-    PackageImport, Ref,
+    scan_latex_with_aliases, BibliographyDecl, DocumentClass, FloatEnv, Graphic, GraphicsPath,
+    Include, Label, PackageImport, Ref, ScanAliases,
 };
 use crate::latex::significant::{mask_discarded_macro_arguments, mask_inactive_regions};
 
@@ -36,9 +36,18 @@ pub struct ProjectIndex {
 
 impl ProjectIndex {
     pub fn build(input_paths: &[PathBuf], discovered_files: &[PathBuf]) -> io::Result<Self> {
+        Self::build_with_aliases(input_paths, discovered_files, &ScanAliases::default())
+    }
+
+    pub fn build_with_aliases(
+        input_paths: &[PathBuf],
+        discovered_files: &[PathBuf],
+        aliases: &ScanAliases,
+    ) -> io::Result<Self> {
         let root = infer_project_root(input_paths, discovered_files)?;
         let mut builder = ProjectBuilder {
             root,
+            aliases: aliases.clone(),
             seen: BTreeSet::new(),
             document_ended: BTreeMap::new(),
             files: Vec::new(),
@@ -126,8 +135,17 @@ fn json_io_error(error: serde_json::Error) -> io::Error {
     io::Error::new(io::ErrorKind::InvalidData, error)
 }
 
+fn scan_latex_with_project_aliases(
+    file: impl Into<PathBuf>,
+    content: &str,
+    aliases: &ScanAliases,
+) -> crate::latex::scan::ScanResult {
+    scan_latex_with_aliases(file, content, aliases)
+}
+
 struct ProjectBuilder {
     root: PathBuf,
+    aliases: ScanAliases,
     seen: BTreeSet<PathBuf>,
     document_ended: BTreeMap<PathBuf, bool>,
     files: Vec<SourceFile>,
@@ -158,7 +176,7 @@ impl ProjectBuilder {
         let content = fs::read_to_string(&canonical)?;
         let content = mask_discarded_macro_arguments(&content);
         let content = mask_inactive_regions(&content);
-        let scan = scan_latex(canonical.clone(), &content);
+        let scan = scan_latex_with_project_aliases(canonical.clone(), &content, &self.aliases);
         let includes = scan.includes.clone();
         let mut truncation_line = scan.document_end.as_ref().map(|location| location.line);
 
@@ -184,7 +202,7 @@ impl ProjectBuilder {
         let content = truncation_line
             .map(|line| truncate_after_line(&content, line))
             .unwrap_or(content);
-        let scan = scan_latex(canonical.clone(), &content);
+        let scan = scan_latex_with_project_aliases(canonical.clone(), &content, &self.aliases);
 
         self.labels.extend(scan.labels);
         self.refs.extend(scan.refs);

@@ -121,8 +121,13 @@ pub fn run_check(options: &CheckOptions) -> Result<CheckResult, ToolError> {
 
     if family_may_be_enabled("CIT", options) || family_may_be_enabled("BIB", options) {
         let explicit_bibs = explicit_bib_files(&options.paths);
-        let citation_diagnostics = check_project(&sources, &explicit_bibs)
-            .map_err(|source| ToolError::Io { path: None, source })?;
+        let citation_diagnostics = check_project(
+            &sources,
+            &explicit_bibs,
+            &options.config.aliases,
+            &options.config.bibliography_forbidden_fields,
+        )
+        .map_err(|source| ToolError::Io { path: None, source })?;
         diagnostics.extend(citation_diagnostics);
     }
 
@@ -206,7 +211,15 @@ fn load_project_index(options: &CheckOptions) -> Result<Option<ProjectIndex>, To
             });
     }
 
-    build_project_index(&options.paths, options.all_tex)
+    let files = discover_tex_files(&options.paths, options.all_tex)
+        .map_err(|source| ToolError::Io { path: None, source })?;
+    if files.is_empty() {
+        return Ok(None);
+    }
+
+    ProjectIndex::build_with_aliases(&options.paths, &files, &options.config.aliases)
+        .map(Some)
+        .map_err(|source| ToolError::Io { path: None, source })
 }
 
 fn code_is_enabled(code: &str, options: &CheckOptions) -> bool {

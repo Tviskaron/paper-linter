@@ -54,15 +54,72 @@ describe the intended MVP and v1.0 roadmap.
 
 ## Installation
 
-### From source
+### Requirements
 
-Requirements:
+- Rust and Cargo. Install them from <https://rustup.rs/> if `cargo --version`
+  does not work.
+- SSH access to GitHub if installing from the private Git URL.
 
-- Rust toolchain with Cargo.
+### Recommended: installer script
 
-Build and install from this repository:
+The installer runs `cargo install`, checks where the binary was installed, and
+helps add Cargo's bin directory to your shell `PATH`.
 
 ```console
+$ curl -fsSL https://raw.githubusercontent.com/Tviskaron/paper-linter/main/install.sh | sh
+```
+
+To also update your detected shell config automatically:
+
+```console
+$ curl -fsSL https://raw.githubusercontent.com/Tviskaron/paper-linter/main/install.sh | sh -s -- --yes
+```
+
+After installation, open a new terminal or reload your shell, then run:
+
+```console
+$ paper-linter --help
+$ paper-linter check paper.tex
+```
+
+### Cargo install from GitHub
+
+You can also install directly with Cargo:
+
+```console
+$ cargo install --git ssh://git@github.com/Tviskaron/paper-linter.git --force
+```
+
+Cargo installs binaries into `~/.cargo/bin`. If `paper-linter` is not found,
+add that directory to your shell path.
+
+For zsh:
+
+```console
+$ echo 'export PATH="$HOME/.cargo/bin:$PATH"' >> ~/.zshrc
+$ source ~/.zshrc
+```
+
+For bash:
+
+```console
+$ echo 'export PATH="$HOME/.cargo/bin:$PATH"' >> ~/.bashrc
+$ source ~/.bashrc
+```
+
+For fish:
+
+```console
+$ fish_add_path "$HOME/.cargo/bin"
+```
+
+### From source
+
+From a local checkout:
+
+```console
+$ git clone git@github.com:Tviskaron/paper-linter.git
+$ cd paper-linter
 $ cargo install --path .
 ```
 

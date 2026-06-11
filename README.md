@@ -43,7 +43,7 @@ An extremely fast linter for LaTeX papers.
 ## Example
 
 ```console
-$ paper-linter check paper.tex
+paper-linter check paper.tex
 paper.tex:42:18: warning[WS001] trailing whitespace
 checked 1 file(s), 0 error(s), 1 warning(s)
 ```
@@ -53,6 +53,9 @@ Current implementation status: the core CLI and rule pipeline are in place, with
 describe the intended MVP and v1.0 roadmap.
 
 ## Installation
+
+Commands below are shown without shell prompt markers so they can be copied
+directly.
 
 ### Requirements
 
@@ -66,20 +69,20 @@ The installer runs `cargo install`, checks where the binary was installed, and
 helps add Cargo's bin directory to your shell `PATH`.
 
 ```console
-$ curl -fsSL https://raw.githubusercontent.com/Tviskaron/paper-linter/main/install.sh | sh
+curl -fsSL https://raw.githubusercontent.com/Tviskaron/paper-linter/main/install.sh | sh
 ```
 
 To also update your detected shell config automatically:
 
 ```console
-$ curl -fsSL https://raw.githubusercontent.com/Tviskaron/paper-linter/main/install.sh | sh -s -- --yes
+curl -fsSL https://raw.githubusercontent.com/Tviskaron/paper-linter/main/install.sh | sh -s -- --yes
 ```
 
 After installation, open a new terminal or reload your shell, then run:
 
 ```console
-$ paper-linter --help
-$ paper-linter check paper.tex
+paper-linter --help
+paper-linter check paper.tex
 ```
 
 ### Cargo install from GitHub
@@ -87,7 +90,7 @@ $ paper-linter check paper.tex
 You can also install directly with Cargo:
 
 ```console
-$ cargo install --git ssh://git@github.com/Tviskaron/paper-linter.git --force
+cargo install --git ssh://git@github.com/Tviskaron/paper-linter.git --force
 ```
 
 Cargo installs binaries into `~/.cargo/bin`. If `paper-linter` is not found,
@@ -96,21 +99,21 @@ add that directory to your shell path.
 For zsh:
 
 ```console
-$ echo 'export PATH="$HOME/.cargo/bin:$PATH"' >> ~/.zshrc
-$ source ~/.zshrc
+echo 'export PATH="$HOME/.cargo/bin:$PATH"' >> ~/.zshrc
+source ~/.zshrc
 ```
 
 For bash:
 
 ```console
-$ echo 'export PATH="$HOME/.cargo/bin:$PATH"' >> ~/.bashrc
-$ source ~/.bashrc
+echo 'export PATH="$HOME/.cargo/bin:$PATH"' >> ~/.bashrc
+source ~/.bashrc
 ```
 
 For fish:
 
 ```console
-$ fish_add_path "$HOME/.cargo/bin"
+fish_add_path "$HOME/.cargo/bin"
 ```
 
 ### From source
@@ -118,24 +121,24 @@ $ fish_add_path "$HOME/.cargo/bin"
 From a local checkout:
 
 ```console
-$ git clone git@github.com:Tviskaron/paper-linter.git
-$ cd paper-linter
-$ cargo install --path .
+git clone git@github.com:Tviskaron/paper-linter.git
+cd paper-linter
+cargo install --path .
 ```
 
 Run the linter:
 
 ```console
-$ paper-linter check paper.tex
-$ paper-linter check paper.tex --strict
-$ paper-linter check paper.tex --format json
-$ paper-linter check . --select WS --ignore WS001
+paper-linter check paper.tex
+paper-linter check paper.tex --strict
+paper-linter check paper.tex --format json
+paper-linter check . --select WS --ignore WS001
 ```
 
 For development, run without installing:
 
 ```console
-$ cargo run -- check paper.tex
+cargo run -- check paper.tex
 ```
 
 ### Verification
@@ -143,9 +146,9 @@ $ cargo run -- check paper.tex
 Before committing changes, run:
 
 ```console
-$ cargo fmt --check
-$ cargo clippy --all-targets --all-features -- -D warnings
-$ cargo test --all
+cargo fmt --check
+cargo clippy --all-targets --all-features -- -D warnings
+cargo test --all
 ```
 
 ## Output Formats

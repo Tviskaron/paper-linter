@@ -50,7 +50,20 @@ checked 1 file(s), 0 error(s), 1 warning(s)
 ```
 
 Current implementation status: the core CLI and rule pipeline are in place, with
-`WS001` trailing whitespace and `CIT001`-`CIT006` citation checks implemented.
+`CIT001`-`CIT006` citation checks and the first Structure & Formatting rules
+implemented:
+
+- `CIT001`-`CIT006`: citation and bibliography consistency checks.
+- `FMT001`: missing final newline.
+- `FMT002`: repeated blank lines.
+- `ENV001`: environment begin/end mismatch.
+- `SEC001`: skipped section hierarchy level.
+- `SEC002`: empty section.
+- `TEX001`: missing non-breaking space before references or citations.
+- `TXT001`: placeholder text.
+- `TXT002`: repeated word.
+- `WS001`: trailing whitespace.
+
 The remaining checks listed above describe the intended MVP and v1.0 roadmap.
 
 ## Installation

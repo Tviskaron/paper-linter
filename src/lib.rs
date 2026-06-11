@@ -2,6 +2,7 @@ pub mod checker;
 pub mod cli;
 pub mod diagnostic;
 pub mod discovery;
+pub mod latex;
 pub mod output;
 pub mod rules;
 

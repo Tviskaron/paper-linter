@@ -26,6 +26,7 @@ mod sec002;
 mod sec003;
 mod sec004;
 mod sec005;
+mod sec006;
 mod tab001;
 mod tab002;
 mod tex001;
@@ -76,6 +77,7 @@ static SEC002_RULE: sec002::EmptySection = sec002::EmptySection;
 static SEC003_RULE: sec003::SingletonSubdivision = sec003::SingletonSubdivision;
 static SEC004_RULE: sec004::StackedHeadings = sec004::StackedHeadings;
 static SEC005_RULE: sec005::ShortSection = sec005::ShortSection;
+static SEC006_RULE: sec006::HeadingStyle = sec006::HeadingStyle;
 static MTH001_RULE: mth001::DoubleDollarDisplayMath = mth001::DoubleDollarDisplayMath;
 static MTH002_RULE: mth002::UnbracedMathScript = mth002::UnbracedMathScript;
 static LAT002_RULE: lat002::PrimitiveTex = lat002::PrimitiveTex;
@@ -87,7 +89,7 @@ static TXT004_RULE: txt004::FillerWords = txt004::FillerWords;
 static TXT005_RULE: txt005::PassiveVoice = txt005::PassiveVoice;
 static CMT001_RULE: cmt001::EditorialComment = cmt001::EditorialComment;
 static WS001_RULE: ws001::TrailingWhitespace = ws001::TrailingWhitespace;
-static RULES: [&dyn Rule; 19] = [
+static RULES: [&dyn Rule; 20] = [
     &ENV001_RULE,
     &FMT001_RULE,
     &FMT002_RULE,
@@ -96,6 +98,7 @@ static RULES: [&dyn Rule; 19] = [
     &SEC003_RULE,
     &SEC004_RULE,
     &SEC005_RULE,
+    &SEC006_RULE,
     &MTH001_RULE,
     &MTH002_RULE,
     &LAT002_RULE,
@@ -167,7 +170,7 @@ pub struct RuleInfo {
     pub fix: &'static str,
 }
 
-static RULE_INFOS: [RuleInfo; 47] = [
+static RULE_INFOS: [RuleInfo; 48] = [
     RuleInfo {
         code: "CMT001",
         name: "editorial comment",
@@ -473,6 +476,14 @@ static RULE_INFOS: [RuleInfo; 47] = [
         fix: "Expand the section or merge it with a neighboring section.",
     },
     RuleInfo {
+        code: "SEC006",
+        name: "heading style",
+        default_severity: Severity::Warning,
+        summary: "A section heading uses discouraged style such as trailing punctuation or all caps.",
+        why: "Consistent heading style makes the paper outline easier to scan and reduces venue-polish issues.",
+        fix: "Use normal heading capitalization and remove trailing heading punctuation unless the venue requires it.",
+    },
+    RuleInfo {
         code: "TAB001",
         name: "orphan table",
         default_severity: Severity::Warning,
@@ -570,8 +581,8 @@ mod tests {
             codes,
             vec![
                 "ENV001", "FMT001", "FMT002", "SEC001", "SEC002", "SEC003", "SEC004", "SEC005",
-                "MTH001", "MTH002", "LAT002", "TEX001", "TXT001", "TXT002", "TXT003", "TXT004",
-                "TXT005", "CMT001", "WS001"
+                "SEC006", "MTH001", "MTH002", "LAT002", "TEX001", "TXT001", "TXT002", "TXT003",
+                "TXT004", "TXT005", "CMT001", "WS001"
             ]
         );
     }
@@ -621,8 +632,8 @@ mod tests {
                 "CIT005", "CIT006", "CIT007", "CIT008", "CIT009", "CIT010", "ENV001", "FIG001",
                 "FIG002", "FIG003", "FIG004", "FIG005", "FIG006", "FMT001", "FMT002", "LBL001",
                 "LAT001", "LAT002", "MTH001", "MTH002", "PRJ001", "PRJ002", "PRJ003", "PRJ004",
-                "REF001", "SEC001", "SEC002", "SEC003", "SEC004", "SEC005", "TAB001", "TAB002",
-                "TEX001", "TXT001", "TXT002", "TXT003", "TXT004", "TXT005", "WS001"
+                "REF001", "SEC001", "SEC002", "SEC003", "SEC004", "SEC005", "SEC006", "TAB001",
+                "TAB002", "TEX001", "TXT001", "TXT002", "TXT003", "TXT004", "TXT005", "WS001"
             ]
         );
     }

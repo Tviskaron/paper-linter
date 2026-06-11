@@ -22,6 +22,9 @@ sample-corpus/
 # Local paper samples used during development
 tmp/
 
+# Local comparative analysis notes
+notes.md
+
 # RustRover
 #  JetBrains specific template is maintained in a separate JetBrains.gitignore that can
 #  be found at https://github.com/github/gitignore/blob/main/Global/JetBrains.gitignore

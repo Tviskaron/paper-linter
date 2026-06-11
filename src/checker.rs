@@ -2,11 +2,13 @@ use std::fmt;
 use std::io;
 use std::path::PathBuf;
 
+use crate::baseline::{Baseline, BaselineError};
 use crate::diagnostic::{Diagnostic, Severity};
 use crate::discovery::discover_tex_files;
 use crate::project::ProjectIndex;
 use crate::rules::citations::{check_project, explicit_bib_files, SourceFile};
 use crate::rules::{all_project_rules, all_rules};
+use crate::suppressions::Suppressions;
 
 #[derive(Debug, Clone)]
 pub struct CheckOptions {
@@ -14,6 +16,8 @@ pub struct CheckOptions {
     pub select: Vec<String>,
     pub ignore: Vec<String>,
     pub strict: bool,
+    pub all_tex: bool,
+    pub baseline: Option<PathBuf>,
 }
 
 #[derive(Debug, Clone)]
@@ -44,6 +48,10 @@ pub enum ToolError {
         path: Option<PathBuf>,
         source: io::Error,
     },
+    Baseline {
+        path: PathBuf,
+        source: BaselineError,
+    },
 }
 
 impl fmt::Display for ToolError {
@@ -54,6 +62,13 @@ impl fmt::Display for ToolError {
                 source,
             } => write!(formatter, "{}: {}", path.display(), source),
             ToolError::Io { path: None, source } => write!(formatter, "{source}"),
+            ToolError::Baseline { path, source } => {
+                write!(
+                    formatter,
+                    "{}: failed to read baseline: {source}",
+                    path.display()
+                )
+            }
         }
     }
 }
@@ -61,7 +76,7 @@ impl fmt::Display for ToolError {
 impl std::error::Error for ToolError {}
 
 pub fn run_check(options: &CheckOptions) -> Result<CheckResult, ToolError> {
-    let files = discover_tex_files(&options.paths)
+    let files = discover_tex_files(&options.paths, options.all_tex)
         .map_err(|source| ToolError::Io { path: None, source })?;
     let mut diagnostics = Vec::new();
 
@@ -108,6 +123,17 @@ pub fn run_check(options: &CheckOptions) -> Result<CheckResult, ToolError> {
 
     diagnostics
         .retain(|diagnostic| code_is_enabled(diagnostic.code, &options.select, &options.ignore));
+
+    let suppressions = Suppressions::from_sources(&project.files);
+    diagnostics.retain(|diagnostic| !suppressions.suppresses(diagnostic));
+
+    if let Some(path) = &options.baseline {
+        let baseline = Baseline::read(path).map_err(|source| ToolError::Baseline {
+            path: path.clone(),
+            source,
+        })?;
+        diagnostics.retain(|diagnostic| !baseline.contains(diagnostic, &project.root));
+    }
 
     if options.strict {
         for diagnostic in &mut diagnostics {

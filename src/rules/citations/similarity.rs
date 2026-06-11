@@ -2,11 +2,11 @@ use crate::diagnostic::{Diagnostic, Severity};
 
 use super::BibEntry;
 
-pub(super) fn find_similar_titles(entries: &[BibEntry]) -> Vec<Diagnostic> {
+pub(super) fn find_similar_titles(entries: &[&BibEntry]) -> Vec<Diagnostic> {
     let mut diagnostics = Vec::new();
     let titled_entries: Vec<_> = entries
         .iter()
-        .filter_map(|entry| normalized_title(entry).map(|title| (entry, title)))
+        .filter_map(|entry| normalized_title(entry).map(|title| (*entry, title)))
         .collect();
 
     for left_index in 0..titled_entries.len() {
@@ -128,7 +128,8 @@ mod tests {
 @misc{beta, author={B}, title={Scaling LLM Test Time Compute for Reasoning}, year={2024}, eprint={1}}",
         );
 
-        let diagnostics = find_similar_titles(&entries);
+        let scoped_entries = entries.iter().collect::<Vec<_>>();
+        let diagnostics = find_similar_titles(&scoped_entries);
 
         assert_eq!(diagnostics.len(), 1);
         assert_eq!(diagnostics[0].code, "CIT006");
@@ -144,6 +145,7 @@ mod tests {
 @misc{beta, author={B}, title={LLM Survey}, year={2024}, eprint={1}}",
         );
 
-        assert!(find_similar_titles(&entries).is_empty());
+        let scoped_entries = entries.iter().collect::<Vec<_>>();
+        assert!(find_similar_titles(&scoped_entries).is_empty());
     }
 }

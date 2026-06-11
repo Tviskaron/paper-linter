@@ -5,9 +5,17 @@ use super::{BibliographyDecl, CitationUse};
 
 pub(super) fn find_citations(path: &Path, content: &str) -> Vec<CitationUse> {
     let mut citations = Vec::new();
+    let mut verbatim_depth = 0usize;
 
     for (line_index, raw_line) in content.lines().enumerate() {
         let line = uncommented_line(raw_line);
+        let scan_line = verbatim_depth == 0;
+        let next_verbatim_depth = update_verbatim_depth(line, verbatim_depth);
+        if !scan_line {
+            verbatim_depth = next_verbatim_depth;
+            continue;
+        }
+
         let mut offset = 0;
 
         while let Some(relative) = line[offset..].find('\\') {
@@ -29,6 +37,10 @@ pub(super) fn find_citations(path: &Path, content: &str) -> Vec<CitationUse> {
             };
 
             for (key, key_column_offset) in split_keys(&line[body_start..body_end]) {
+                if contains_macro_parameter(&key) {
+                    continue;
+                }
+
                 citations.push(CitationUse {
                     key,
                     file: path.to_path_buf(),
@@ -40,6 +52,8 @@ pub(super) fn find_citations(path: &Path, content: &str) -> Vec<CitationUse> {
 
             offset = body_end + 1;
         }
+
+        verbatim_depth = next_verbatim_depth;
     }
 
     citations
@@ -47,39 +61,42 @@ pub(super) fn find_citations(path: &Path, content: &str) -> Vec<CitationUse> {
 
 pub(super) fn find_bibliographies(path: &Path, content: &str) -> Vec<BibliographyDecl> {
     let mut declarations = Vec::new();
+    let line_starts = line_starts(content);
+    let mut offset = 0;
 
-    for (line_index, raw_line) in content.lines().enumerate() {
-        let line = uncommented_line(raw_line);
-        let mut offset = 0;
-
-        while let Some(relative) = line[offset..].find('\\') {
-            let start = offset + relative;
-            let Some((name, after_name)) = read_command_name(line, start) else {
-                offset = start + 1;
-                continue;
-            };
-
-            if name != "bibliography" && name != "addbibresource" {
-                offset = after_name;
-                continue;
-            }
-
-            let Some((body_start, body_end)) = read_command_argument(line, after_name) else {
-                offset = after_name;
-                continue;
-            };
-
-            for (bib_path, column_offset) in split_keys(&line[body_start..body_end]) {
-                declarations.push(BibliographyDecl {
-                    path: bib_path,
-                    file: path.to_path_buf(),
-                    line: line_index + 1,
-                    column: char_column(line, body_start + column_offset),
-                });
-            }
-
-            offset = body_end + 1;
+    while let Some(relative) = content[offset..].find('\\') {
+        let start = offset + relative;
+        if is_commented_position(content, start) {
+            offset = start + 1;
+            continue;
         }
+
+        let Some((name, after_name)) = read_command_name(content, start) else {
+            offset = start + 1;
+            continue;
+        };
+
+        if name != "bibliography" && name != "addbibresource" {
+            offset = after_name;
+            continue;
+        }
+
+        let Some((body_start, body_end)) = read_command_argument(content, after_name) else {
+            offset = after_name;
+            continue;
+        };
+
+        for (bib_path, column_offset) in split_keys(&content[body_start..body_end]) {
+            let (line, column) = line_column(&line_starts, content, body_start + column_offset);
+            declarations.push(BibliographyDecl {
+                path: bib_path,
+                file: path.to_path_buf(),
+                line,
+                column,
+            });
+        }
+
+        offset = body_end + 1;
     }
 
     declarations
@@ -213,6 +230,81 @@ fn char_column(line: &str, byte_index: usize) -> usize {
     line[..byte_index].chars().count() + 1
 }
 
+fn contains_macro_parameter(key: &str) -> bool {
+    let mut chars = key.chars();
+    while let Some(character) = chars.next() {
+        if character == '#' && chars.next().is_some_and(|next| next.is_ascii_digit()) {
+            return true;
+        }
+    }
+    false
+}
+
+fn update_verbatim_depth(line: &str, mut depth: usize) -> usize {
+    let mut offset = 0;
+    while let Some(relative) = line[offset..].find('\\') {
+        let start = offset + relative;
+        let Some((name, after_name)) = read_command_name(line, start) else {
+            offset = start + 1;
+            continue;
+        };
+
+        if name != "begin" && name != "end" {
+            offset = after_name;
+            continue;
+        }
+
+        let Some((body_start, body_end)) = read_command_argument(line, after_name) else {
+            offset = after_name;
+            continue;
+        };
+
+        if is_verbatim_environment(line[body_start..body_end].trim()) {
+            if name == "begin" {
+                depth += 1;
+            } else {
+                depth = depth.saturating_sub(1);
+            }
+        }
+
+        offset = body_end + 1;
+    }
+
+    depth
+}
+
+fn is_verbatim_environment(name: &str) -> bool {
+    matches!(
+        name,
+        "verbatim" | "Verbatim" | "lstlisting" | "minted" | "alltt"
+    )
+}
+
+fn line_starts(content: &str) -> Vec<usize> {
+    let mut starts = vec![0];
+    for (index, character) in content.char_indices() {
+        if character == '\n' {
+            starts.push(index + 1);
+        }
+    }
+    starts
+}
+
+fn line_column(line_starts: &[usize], content: &str, byte_index: usize) -> (usize, usize) {
+    let line_index = line_starts.partition_point(|start| *start <= byte_index) - 1;
+    let line_start = line_starts[line_index];
+    let column = content[line_start..byte_index].chars().count() + 1;
+    (line_index + 1, column)
+}
+
+fn is_commented_position(content: &str, byte_index: usize) -> bool {
+    let line_start = content[..byte_index]
+        .rfind('\n')
+        .map(|index| index + 1)
+        .unwrap_or(0);
+    uncommented_line(&content[line_start..byte_index]).len() < byte_index - line_start
+}
+
 #[cfg(test)]
 mod tests {
     use std::path::Path;
@@ -256,6 +348,28 @@ mod tests {
     }
 
     #[test]
+    fn ignores_macro_parameter_citation_keys() {
+        let citations = find_citations(
+            Path::new("paper.tex"),
+            r"\newcommand{\mycite}[1]{\cite{#1}} \cite{real}",
+        );
+
+        assert_eq!(citations.len(), 1);
+        assert_eq!(citations[0].key, "real");
+    }
+
+    #[test]
+    fn ignores_citations_inside_verbatim_environments() {
+        let citations = find_citations(
+            Path::new("paper.tex"),
+            "\\begin{verbatim}\n\\cite{example}\n\\end{verbatim}\n\\cite{real}",
+        );
+
+        assert_eq!(citations.len(), 1);
+        assert_eq!(citations[0].key, "real");
+    }
+
+    #[test]
     fn finds_bibliography_declarations() {
         let declarations = find_bibliographies(
             Path::new("paper.tex"),
@@ -267,5 +381,18 @@ mod tests {
             .map(|declaration: &BibliographyDecl| declaration.path.as_str())
             .collect();
         assert_eq!(paths, vec!["refs", "more", "extra.bib"]);
+    }
+
+    #[test]
+    fn finds_multiline_bibliography_declarations() {
+        let declarations = find_bibliographies(
+            Path::new("paper.tex"),
+            "\\addbibresource{refs.bib\n}\n% \\bibliography{commented}\n",
+        );
+
+        assert_eq!(declarations.len(), 1);
+        assert_eq!(declarations[0].path, "refs.bib");
+        assert_eq!(declarations[0].line, 1);
+        assert_eq!(declarations[0].column, 17);
     }
 }

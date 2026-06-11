@@ -70,6 +70,12 @@ pub struct Graphic {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub struct GraphicsPath {
+    pub raw_path: String,
+    pub location: SourceLocation,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Caption {
     pub location: SourceLocation,
 }
@@ -95,6 +101,7 @@ pub struct ScanResult {
     pub labels: Vec<Label>,
     pub refs: Vec<Ref>,
     pub graphics: Vec<Graphic>,
+    pub graphics_paths: Vec<GraphicsPath>,
     pub includes: Vec<Include>,
     pub floats: Vec<FloatEnv>,
 }
@@ -174,6 +181,23 @@ pub fn scan_latex(file: impl Into<PathBuf>, content: &str) -> ScanResult {
                     let graphic = Graphic { raw_path, location };
                     attach_graphic(&mut stack, graphic.clone());
                     result.graphics.push(graphic);
+                    index = end;
+                } else {
+                    index = after_command;
+                }
+            }
+            "graphicspath" => {
+                if let Some((raw_paths, end)) = parse_required_arg(content, after_command) {
+                    result
+                        .graphics_paths
+                        .extend(
+                            parse_graphics_paths(&raw_paths)
+                                .into_iter()
+                                .map(|raw_path| GraphicsPath {
+                                    raw_path,
+                                    location: location.clone(),
+                                }),
+                        );
                     index = end;
                 } else {
                     index = after_command;
@@ -324,6 +348,61 @@ fn parse_required_arg(content: &str, start: usize) -> Option<(String, usize)> {
     }
 
     None
+}
+
+fn parse_graphics_paths(raw_paths: &str) -> Vec<String> {
+    let bytes = raw_paths.as_bytes();
+    let mut paths = Vec::new();
+    let mut index = 0;
+
+    while index < bytes.len() {
+        if bytes[index].is_ascii_whitespace() {
+            index += 1;
+            continue;
+        }
+
+        if bytes[index] != b'{' {
+            break;
+        }
+
+        let start = index + 1;
+        let mut depth = 1usize;
+        index += 1;
+
+        while index < bytes.len() {
+            match bytes[index] {
+                b'\\' => {
+                    index = (index + 2).min(bytes.len());
+                }
+                b'{' => {
+                    depth += 1;
+                    index += 1;
+                }
+                b'}' => {
+                    depth -= 1;
+                    if depth == 0 {
+                        let path = raw_paths[start..index].trim();
+                        if !path.is_empty() {
+                            paths.push(path.to_string());
+                        }
+                        index += 1;
+                        break;
+                    }
+                    index += 1;
+                }
+                _ => index += 1,
+            }
+        }
+    }
+
+    if paths.is_empty() {
+        let path = raw_paths.trim();
+        if !path.is_empty() {
+            paths.push(path.to_string());
+        }
+    }
+
+    paths
 }
 
 fn skip_optional_args(content: &str, start: usize) -> usize {
@@ -498,5 +577,20 @@ mod tests {
             .map(|include| include.raw_path.as_str())
             .collect();
         assert_eq!(paths, vec!["sections/method", "sections/results"]);
+    }
+
+    #[test]
+    fn records_graphics_paths() {
+        let scan = scan_latex(
+            Path::new("paper.tex"),
+            "\\graphicspath{{images/}{../shared figures/}}\n",
+        );
+
+        let paths: Vec<_> = scan
+            .graphics_paths
+            .iter()
+            .map(|path| path.raw_path.as_str())
+            .collect();
+        assert_eq!(paths, vec!["images/", "../shared figures/"]);
     }
 }

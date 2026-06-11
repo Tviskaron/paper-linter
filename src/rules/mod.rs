@@ -11,6 +11,7 @@ mod fig006;
 mod fmt001;
 mod fmt002;
 mod lbl001;
+mod mth001;
 mod ref001;
 mod sec001;
 mod sec002;
@@ -55,11 +56,12 @@ static SEC001_RULE: sec001::SkippedSectionLevel = sec001::SkippedSectionLevel;
 static SEC002_RULE: sec002::EmptySection = sec002::EmptySection;
 static SEC003_RULE: sec003::SingletonSubdivision = sec003::SingletonSubdivision;
 static SEC004_RULE: sec004::StackedHeadings = sec004::StackedHeadings;
+static MTH001_RULE: mth001::DoubleDollarDisplayMath = mth001::DoubleDollarDisplayMath;
 static TEX001_RULE: tex001::MissingNonBreakingSpace = tex001::MissingNonBreakingSpace;
 static TXT001_RULE: txt001::PlaceholderText = txt001::PlaceholderText;
 static TXT002_RULE: txt002::RepeatedWords = txt002::RepeatedWords;
 static WS001_RULE: ws001::TrailingWhitespace = ws001::TrailingWhitespace;
-static RULES: [&dyn Rule; 11] = [
+static RULES: [&dyn Rule; 12] = [
     &ENV001_RULE,
     &FMT001_RULE,
     &FMT002_RULE,
@@ -67,6 +69,7 @@ static RULES: [&dyn Rule; 11] = [
     &SEC002_RULE,
     &SEC003_RULE,
     &SEC004_RULE,
+    &MTH001_RULE,
     &TEX001_RULE,
     &TXT001_RULE,
     &TXT002_RULE,
@@ -118,7 +121,7 @@ pub struct RuleInfo {
     pub fix: &'static str,
 }
 
-static RULE_INFOS: [RuleInfo; 29] = [
+static RULE_INFOS: [RuleInfo; 30] = [
     RuleInfo {
         code: "CAP001",
         name: "caption missing",
@@ -264,6 +267,14 @@ static RULE_INFOS: [RuleInfo; 29] = [
         fix: "Reference the label with \\ref{...} or remove it.",
     },
     RuleInfo {
+        code: "MTH001",
+        name: "double-dollar display math",
+        default_severity: Severity::Warning,
+        summary: "A file uses TeX-style $$ display math delimiters.",
+        why: "In LaTeX, \\[...\\] or named display math environments are safer and avoid spacing/package edge cases.",
+        fix: "Replace $$...$$ with \\[...\\] or an appropriate display math environment.",
+    },
+    RuleInfo {
         code: "REF001",
         name: "missing reference target",
         default_severity: Severity::Error,
@@ -373,8 +384,8 @@ mod tests {
         assert_eq!(
             codes,
             vec![
-                "ENV001", "FMT001", "FMT002", "SEC001", "SEC002", "SEC003", "SEC004", "TEX001",
-                "TXT001", "TXT002", "WS001"
+                "ENV001", "FMT001", "FMT002", "SEC001", "SEC002", "SEC003", "SEC004", "MTH001",
+                "TEX001", "TXT001", "TXT002", "WS001"
             ]
         );
     }
@@ -410,8 +421,8 @@ mod tests {
             vec![
                 "CAP001", "CAP002", "CIT001", "CIT002", "CIT003", "CIT004", "CIT005", "CIT006",
                 "ENV001", "FIG001", "FIG002", "FIG003", "FIG004", "FIG005", "FIG006", "FMT001",
-                "FMT002", "LBL001", "REF001", "SEC001", "SEC002", "SEC003", "SEC004", "TAB001",
-                "TAB002", "TEX001", "TXT001", "TXT002", "WS001"
+                "FMT002", "LBL001", "MTH001", "REF001", "SEC001", "SEC002", "SEC003", "SEC004",
+                "TAB001", "TAB002", "TEX001", "TXT001", "TXT002", "WS001"
             ]
         );
     }

@@ -1,12 +1,12 @@
 use std::fmt;
-use std::fs;
 use std::io;
 use std::path::PathBuf;
 
 use crate::diagnostic::{Diagnostic, Severity};
 use crate::discovery::discover_tex_files;
-use crate::rules::all_rules;
+use crate::project::ProjectIndex;
 use crate::rules::citations::{check_project, explicit_bib_files, SourceFile};
+use crate::rules::{all_project_rules, all_rules};
 
 #[derive(Debug, Clone)]
 pub struct CheckOptions {
@@ -64,26 +64,39 @@ pub fn run_check(options: &CheckOptions) -> Result<CheckResult, ToolError> {
     let files = discover_tex_files(&options.paths)
         .map_err(|source| ToolError::Io { path: None, source })?;
     let mut diagnostics = Vec::new();
+
+    if files.is_empty() {
+        return Ok(CheckResult {
+            diagnostics,
+            files_checked: 0,
+        });
+    }
+
+    let project = ProjectIndex::build(&options.paths, &files)
+        .map_err(|source| ToolError::Io { path: None, source })?;
     let mut sources = Vec::new();
 
-    for file in &files {
-        let content = fs::read_to_string(file).map_err(|source| ToolError::Io {
-            path: Some(file.clone()),
-            source,
-        })?;
-
+    for file in &project.files {
         for rule in all_rules() {
             if !code_is_enabled(rule.code(), &options.select, &options.ignore) {
                 continue;
             }
 
-            diagnostics.extend(rule.check_file(file, &content));
+            diagnostics.extend(rule.check_file(&file.path, &file.content));
         }
 
         sources.push(SourceFile {
-            path: file.clone(),
-            content,
+            path: file.path.clone(),
+            content: file.content.clone(),
         });
+    }
+
+    for rule in all_project_rules() {
+        if !code_is_enabled(rule.code(), &options.select, &options.ignore) {
+            continue;
+        }
+
+        diagnostics.extend(rule.check_project(&project));
     }
 
     if family_may_be_enabled("CIT", &options.select, &options.ignore) {
@@ -114,7 +127,7 @@ pub fn run_check(options: &CheckOptions) -> Result<CheckResult, ToolError> {
 
     Ok(CheckResult {
         diagnostics,
-        files_checked: files.len(),
+        files_checked: project.files.len(),
     })
 }
 
@@ -140,6 +153,7 @@ mod tests {
     #[test]
     fn select_defaults_to_all_rules() {
         assert!(code_is_enabled("WS001", &[], &[]));
+        assert!(code_is_enabled("FIG001", &[], &[]));
     }
 
     #[test]

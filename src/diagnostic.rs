@@ -22,6 +22,8 @@ pub struct Diagnostic {
     pub code: &'static str,
     pub severity: Severity,
     pub message: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub hint: Option<String>,
     pub file: PathBuf,
     pub line: usize,
     pub column: usize,
@@ -40,9 +42,15 @@ impl Diagnostic {
             code,
             severity,
             message: message.into(),
+            hint: None,
             file: file.into(),
             line,
             column,
         }
+    }
+
+    pub fn with_hint(mut self, hint: impl Into<String>) -> Self {
+        self.hint = Some(hint.into());
+        self
     }
 }

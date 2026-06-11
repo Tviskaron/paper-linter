@@ -253,10 +253,11 @@ Keep new modules fast and source-only by default: scan text, preserve line and
 column positions, avoid invoking TeX, avoid network access, and leave expensive
 checks for explicit future commands.
 
-For project-level checks that need multiple files, follow the citation module
-pattern instead of forcing the `Rule` trait. Keep the scanner in its own module,
-return normal `Diagnostic` values, and call it from `run_check` after source
-files are loaded.
+For project-level checks that need multiple files, follow the abstraction tree
+in `DESIGN_NOTES.md`. The citation checker shows the intended subsystem shape:
+keep a small facade/orchestrator, split scanners/parsers/resolvers/analysis into
+focused private submodules, return normal `Diagnostic` values, and avoid adding
+new checker special cases when a project-rule registry can own the dispatch.
 
 ## Roadmap
 

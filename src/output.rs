@@ -98,6 +98,41 @@ pub fn render_sarif(result: &CheckResult, root: &Path) -> Result<String, serde_j
     }))
 }
 
+pub fn render_ready_text(result: &CheckResult) -> String {
+    let groups = ReadyGroups::from_result(result);
+    let mut output = String::new();
+
+    output.push_str(&format!("submission readiness: {}\n", groups.status));
+    output.push_str(&format!(
+        "checked {} file(s), {} blocker(s), {} warning(s)\n",
+        result.files_checked,
+        groups.blockers.len(),
+        result.warning_count()
+    ));
+
+    push_ready_group(&mut output, "Blockers", &groups.blockers);
+    push_ready_group(&mut output, "Project risks", &groups.project_risks);
+    push_ready_group(&mut output, "Polish", &groups.polish);
+
+    output
+}
+
+pub fn render_ready_json(result: &CheckResult) -> Result<String, serde_json::Error> {
+    let groups = ReadyGroups::from_result(result);
+    serde_json::to_string_pretty(&ReadyOutput {
+        version: env!("CARGO_PKG_VERSION"),
+        status: groups.status,
+        summary: JsonSummary {
+            files_checked: result.files_checked,
+            errors: result.error_count(),
+            warnings: result.warning_count(),
+        },
+        blockers: groups.blockers,
+        project_risks: groups.project_risks,
+        polish: groups.polish,
+    })
+}
+
 #[derive(Serialize)]
 struct JsonOutput<'a> {
     version: &'static str,
@@ -110,6 +145,92 @@ struct JsonSummary {
     files_checked: usize,
     errors: usize,
     warnings: usize,
+}
+
+#[derive(Serialize)]
+struct ReadyOutput<'a> {
+    version: &'static str,
+    status: &'static str,
+    summary: JsonSummary,
+    blockers: Vec<&'a Diagnostic>,
+    project_risks: Vec<&'a Diagnostic>,
+    polish: Vec<&'a Diagnostic>,
+}
+
+struct ReadyGroups<'a> {
+    status: &'static str,
+    blockers: Vec<&'a Diagnostic>,
+    project_risks: Vec<&'a Diagnostic>,
+    polish: Vec<&'a Diagnostic>,
+}
+
+impl<'a> ReadyGroups<'a> {
+    fn from_result(result: &'a CheckResult) -> Self {
+        let mut blockers = Vec::new();
+        let mut project_risks = Vec::new();
+        let mut polish = Vec::new();
+
+        for diagnostic in &result.diagnostics {
+            match diagnostic.severity {
+                Severity::Error => blockers.push(diagnostic),
+                Severity::Warning if is_project_risk(diagnostic.code) => {
+                    project_risks.push(diagnostic);
+                }
+                Severity::Warning => polish.push(diagnostic),
+            }
+        }
+
+        let status = if !blockers.is_empty() {
+            "not ready"
+        } else if !project_risks.is_empty() || !polish.is_empty() {
+            "ready with warnings"
+        } else {
+            "ready"
+        };
+
+        Self {
+            status,
+            blockers,
+            project_risks,
+            polish,
+        }
+    }
+}
+
+fn is_project_risk(code: &str) -> bool {
+    matches!(
+        &code[..3.min(code.len())],
+        "BIB" | "CIT" | "FIG" | "LBL" | "PRJ" | "REF" | "TAB"
+    )
+}
+
+fn push_ready_group(output: &mut String, title: &str, diagnostics: &[&Diagnostic]) {
+    output.push('\n');
+    output.push_str(title);
+    output.push_str(":\n");
+
+    if diagnostics.is_empty() {
+        output.push_str("- none\n");
+        return;
+    }
+
+    for diagnostic in diagnostics {
+        let hint = diagnostic
+            .hint
+            .as_ref()
+            .map(|hint| format!("; hint: {hint}"))
+            .unwrap_or_default();
+        output.push_str(&format!(
+            "- {}[{}] {}:{}:{} {}{}\n",
+            diagnostic.severity.as_str(),
+            diagnostic.code,
+            diagnostic.file.display(),
+            diagnostic.line,
+            diagnostic.column,
+            diagnostic.message,
+            hint
+        ));
+    }
 }
 
 fn sarif_result(diagnostic: &Diagnostic, root: &Path) -> serde_json::Value {
@@ -169,7 +290,7 @@ mod tests {
     use crate::checker::CheckResult;
     use crate::diagnostic::{Diagnostic, Severity};
 
-    use super::render_sarif;
+    use super::{render_ready_json, render_ready_text, render_sarif};
 
     #[test]
     fn sarif_output_contains_rules_results_and_fingerprints() {
@@ -206,5 +327,51 @@ mod tests {
             value["runs"][0]["results"][0]["properties"]["hint"],
             "remove trailing whitespace"
         );
+    }
+
+    #[test]
+    fn ready_output_groups_diagnostics() {
+        let result = CheckResult {
+            diagnostics: vec![
+                Diagnostic::new(
+                    "FIG001",
+                    Severity::Error,
+                    "asset missing",
+                    "paper.tex",
+                    1,
+                    1,
+                ),
+                Diagnostic::new(
+                    "CIT002",
+                    Severity::Warning,
+                    "unused citation",
+                    "paper.tex",
+                    2,
+                    1,
+                ),
+                Diagnostic::new(
+                    "WS001",
+                    Severity::Warning,
+                    "trailing whitespace",
+                    "paper.tex",
+                    3,
+                    5,
+                ),
+            ],
+            files_checked: 1,
+        };
+
+        let text = render_ready_text(&result);
+        assert!(text.contains("submission readiness: not ready"));
+        assert!(text.contains("Blockers:"));
+        assert!(text.contains("Project risks:"));
+        assert!(text.contains("Polish:"));
+
+        let json: serde_json::Value =
+            serde_json::from_str(&render_ready_json(&result).unwrap()).unwrap();
+        assert_eq!(json["status"], "not ready");
+        assert_eq!(json["blockers"][0]["code"], "FIG001");
+        assert_eq!(json["project_risks"][0]["code"], "CIT002");
+        assert_eq!(json["polish"][0]["code"], "WS001");
     }
 }

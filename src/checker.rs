@@ -5,6 +5,7 @@ use std::path::PathBuf;
 use crate::diagnostic::{Diagnostic, Severity};
 use crate::discovery::discover_tex_files;
 use crate::project::ProjectIndex;
+use crate::rules::citations::{check_project, explicit_bib_files, SourceFile};
 use crate::rules::{all_project_rules, all_rules};
 
 #[derive(Debug, Clone)]
@@ -73,24 +74,40 @@ pub fn run_check(options: &CheckOptions) -> Result<CheckResult, ToolError> {
 
     let project = ProjectIndex::build(&options.paths, &files)
         .map_err(|source| ToolError::Io { path: None, source })?;
+    let mut sources = Vec::new();
 
     for file in &project.files {
         for rule in all_rules() {
-            if !rule_is_enabled(rule.code(), &options.select, &options.ignore) {
+            if !code_is_enabled(rule.code(), &options.select, &options.ignore) {
                 continue;
             }
 
             diagnostics.extend(rule.check_file(&file.path, &file.content));
         }
+
+        sources.push(SourceFile {
+            path: file.path.clone(),
+            content: file.content.clone(),
+        });
     }
 
     for rule in all_project_rules() {
-        if !rule_is_enabled(rule.code(), &options.select, &options.ignore) {
+        if !code_is_enabled(rule.code(), &options.select, &options.ignore) {
             continue;
         }
 
         diagnostics.extend(rule.check_project(&project));
     }
+
+    if family_may_be_enabled("CIT", &options.select, &options.ignore) {
+        let explicit_bibs = explicit_bib_files(&options.paths);
+        let citation_diagnostics = check_project(&sources, &explicit_bibs)
+            .map_err(|source| ToolError::Io { path: None, source })?;
+        diagnostics.extend(citation_diagnostics);
+    }
+
+    diagnostics
+        .retain(|diagnostic| code_is_enabled(diagnostic.code, &options.select, &options.ignore));
 
     if options.strict {
         for diagnostic in &mut diagnostics {
@@ -114,32 +131,41 @@ pub fn run_check(options: &CheckOptions) -> Result<CheckResult, ToolError> {
     })
 }
 
-fn rule_is_enabled(code: &str, select: &[String], ignore: &[String]) -> bool {
+fn code_is_enabled(code: &str, select: &[String], ignore: &[String]) -> bool {
     let selected = select.is_empty() || select.iter().any(|pattern| code.starts_with(pattern));
     let ignored = ignore.iter().any(|pattern| code.starts_with(pattern));
     selected && !ignored
 }
 
+fn family_may_be_enabled(family: &str, select: &[String], ignore: &[String]) -> bool {
+    let selected = select.is_empty()
+        || select
+            .iter()
+            .any(|pattern| family.starts_with(pattern) || pattern.starts_with(family));
+    let ignored = ignore.iter().any(|pattern| *pattern == family);
+    selected && !ignored
+}
+
 #[cfg(test)]
 mod tests {
-    use super::rule_is_enabled;
+    use super::code_is_enabled;
 
     #[test]
     fn select_defaults_to_all_rules() {
-        assert!(rule_is_enabled("WS001", &[], &[]));
-        assert!(rule_is_enabled("FIG001", &[], &[]));
+        assert!(code_is_enabled("WS001", &[], &[]));
+        assert!(code_is_enabled("FIG001", &[], &[]));
     }
 
     #[test]
     fn select_accepts_exact_codes_and_prefixes() {
-        assert!(rule_is_enabled("WS001", &[String::from("WS001")], &[]));
-        assert!(rule_is_enabled("WS001", &[String::from("WS")], &[]));
-        assert!(!rule_is_enabled("WS001", &[String::from("CIT")], &[]));
+        assert!(code_is_enabled("WS001", &[String::from("WS001")], &[]));
+        assert!(code_is_enabled("WS001", &[String::from("WS")], &[]));
+        assert!(!code_is_enabled("WS001", &[String::from("CIT")], &[]));
     }
 
     #[test]
     fn ignore_is_applied_after_select() {
-        assert!(!rule_is_enabled(
+        assert!(!code_is_enabled(
             "WS001",
             &[String::from("WS")],
             &[String::from("WS001")]

@@ -3,7 +3,7 @@ use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
 
-use crate::latex::{scan_latex, FloatEnv, Graphic, Include, Label, Ref};
+use crate::latex::scan::{scan_latex, FloatEnv, Graphic, Include, Label, Ref};
 
 const GRAPHICS_EXTENSIONS: [&str; 6] = ["pdf", "png", "jpg", "jpeg", "eps", "svg"];
 

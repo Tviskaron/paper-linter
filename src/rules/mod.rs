@@ -1,8 +1,17 @@
 mod cap001;
+pub(crate) mod citations;
+mod env001;
 mod fig001;
 mod fig002;
+mod fmt001;
+mod fmt002;
 mod lbl001;
+mod sec001;
+mod sec002;
 mod tab001;
+mod tex001;
+mod txt001;
+mod txt002;
 mod ws001;
 
 use std::path::Path;
@@ -22,8 +31,26 @@ pub trait ProjectRule: Sync {
     fn check_project(&self, project: &ProjectIndex) -> Vec<Diagnostic>;
 }
 
+static ENV001_RULE: env001::EnvironmentMismatch = env001::EnvironmentMismatch;
+static FMT001_RULE: fmt001::MissingFinalNewline = fmt001::MissingFinalNewline;
+static FMT002_RULE: fmt002::RepeatedBlankLines = fmt002::RepeatedBlankLines;
+static SEC001_RULE: sec001::SkippedSectionLevel = sec001::SkippedSectionLevel;
+static SEC002_RULE: sec002::EmptySection = sec002::EmptySection;
+static TEX001_RULE: tex001::MissingNonBreakingSpace = tex001::MissingNonBreakingSpace;
+static TXT001_RULE: txt001::PlaceholderText = txt001::PlaceholderText;
+static TXT002_RULE: txt002::RepeatedWords = txt002::RepeatedWords;
 static WS001_RULE: ws001::TrailingWhitespace = ws001::TrailingWhitespace;
-static RULES: [&dyn Rule; 1] = [&WS001_RULE];
+static RULES: [&dyn Rule; 9] = [
+    &ENV001_RULE,
+    &FMT001_RULE,
+    &FMT002_RULE,
+    &SEC001_RULE,
+    &SEC002_RULE,
+    &TEX001_RULE,
+    &TXT001_RULE,
+    &TXT002_RULE,
+    &WS001_RULE,
+];
 
 static FIG001_RULE: fig001::MissingAsset = fig001::MissingAsset;
 static CAP001_RULE: cap001::MissingCaption = cap001::MissingCaption;
@@ -51,9 +78,15 @@ mod tests {
     use super::{all_project_rules, all_rules, ProjectRule, Rule};
 
     #[test]
-    fn rule_registry_contains_ws001() {
+    fn rule_registry_contains_rules() {
         let codes: Vec<_> = all_rules().iter().map(|rule| rule.code()).collect();
-        assert_eq!(codes, vec!["WS001"]);
+        assert_eq!(
+            codes,
+            vec![
+                "ENV001", "FMT001", "FMT002", "SEC001", "SEC002", "TEX001", "TXT001", "TXT002",
+                "WS001"
+            ]
+        );
     }
 
     #[test]

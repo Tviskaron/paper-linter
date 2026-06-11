@@ -1,5 +1,5 @@
 use crate::diagnostic::{Diagnostic, Severity};
-use crate::latex::LabelKind;
+use crate::latex::scan::LabelKind;
 use crate::project::ProjectIndex;
 use crate::rules::ProjectRule;
 

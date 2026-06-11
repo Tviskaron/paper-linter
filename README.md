@@ -17,7 +17,8 @@ An extremely fast linter for LaTeX papers.
 - Every `\cite{}` key exists in `.bib`.
 - Every `.bib` entry is cited.
 - Required fields: author, year, venue.
-- Roadmap: DOI/URL validation, duplicate bibliography detection, consistent `\citet` / `\citep` style.
+- Duplicate bibliography keys and very similar titles with different keys.
+- Roadmap: DOI/URL validation and consistent `\citet` / `\citep` style.
 
 ### Figures & Tables
 
@@ -49,8 +50,21 @@ checked 1 file(s), 0 error(s), 1 warning(s)
 ```
 
 Current implementation status: the core CLI and rule pipeline are in place, with
-`WS001` trailing whitespace as the first proving rule. The checks listed above
-describe the intended MVP and v1.0 roadmap.
+`CIT001`-`CIT006` citation checks and the first Structure & Formatting rules
+implemented:
+
+- `CIT001`-`CIT006`: citation and bibliography consistency checks.
+- `FMT001`: missing final newline.
+- `FMT002`: repeated blank lines.
+- `ENV001`: environment begin/end mismatch.
+- `SEC001`: skipped section hierarchy level.
+- `SEC002`: empty section.
+- `TEX001`: missing non-breaking space before references or citations.
+- `TXT001`: placeholder text.
+- `TXT002`: repeated word.
+- `WS001`: trailing whitespace.
+
+The remaining checks listed above describe the intended MVP and v1.0 roadmap.
 
 ## Installation
 
@@ -63,31 +77,7 @@ directly.
   does not work.
 - SSH access to GitHub if installing from the private Git URL.
 
-### Recommended: installer script
-
-The installer runs `cargo install`, checks where the binary was installed, and
-helps add Cargo's bin directory to your shell `PATH`.
-
-```console
-curl -fsSL https://raw.githubusercontent.com/Tviskaron/paper-linter/main/install.sh | sh
-```
-
-To also update your detected shell config automatically:
-
-```console
-curl -fsSL https://raw.githubusercontent.com/Tviskaron/paper-linter/main/install.sh | sh -s -- --yes
-```
-
-After installation, open a new terminal or reload your shell, then run:
-
-```console
-paper-linter --help
-paper-linter check paper.tex
-```
-
-### Cargo install from GitHub
-
-You can also install directly with Cargo:
+### Repository install
 
 ```console
 cargo install --git ssh://git@github.com/Tviskaron/paper-linter.git --force
@@ -116,6 +106,32 @@ For fish:
 fish_add_path "$HOME/.cargo/bin"
 ```
 
+Check the install:
+
+```console
+paper-linter --help
+paper-linter check paper.tex
+```
+
+### Repository installer script
+
+The installer runs `cargo install`, checks where the binary was installed, and
+helps add Cargo's bin directory to your shell `PATH`.
+
+```console
+git clone git@github.com:Tviskaron/paper-linter.git
+cd paper-linter
+./install.sh --yes
+```
+
+### Public repo one-liner
+
+If the repository is public, the installer can also be run directly from GitHub:
+
+```console
+curl -fsSL https://raw.githubusercontent.com/Tviskaron/paper-linter/main/install.sh | sh -s -- --yes
+```
+
 ### From source
 
 From a local checkout:
@@ -133,6 +149,7 @@ paper-linter check paper.tex
 paper-linter check paper.tex --strict
 paper-linter check paper.tex --format json
 paper-linter check . --select WS --ignore WS001
+paper-linter check paper.tex refs.bib --select CIT
 ```
 
 For development, run without installing:
@@ -151,6 +168,14 @@ cargo clippy --all-targets --all-features -- -D warnings
 cargo test --all
 ```
 
+For manual real-paper smoke tests, collect local arXiv sources into the ignored
+`sample-corpus/` directory:
+
+```console
+scripts/fetch_arxiv_corpus.sh 1706.03762 1810.04805
+cargo run -- check sample-corpus/1706.03762 --select CIT
+```
+
 ## Output Formats
 
 - **CLI**: colored terminal output.
@@ -163,7 +188,7 @@ items.
 
 ## Adding a Rule Module
 
-Rules live in `src/rules/` and implement the `Rule` trait:
+File-local rules live in `src/rules/` and implement the `Rule` trait:
 
 ```rust
 pub trait Rule: Sync {
@@ -227,6 +252,12 @@ impl Rule for MyRule {
 Keep new modules fast and source-only by default: scan text, preserve line and
 column positions, avoid invoking TeX, avoid network access, and leave expensive
 checks for explicit future commands.
+
+For project-level checks that need multiple files, follow the abstraction tree
+in `DESIGN_NOTES.md`. The citation checker shows the intended subsystem shape:
+keep a small facade/orchestrator, split scanners/parsers/resolvers/analysis into
+focused private submodules, return normal `Diagnostic` values, and avoid adding
+new checker special cases when a project-rule registry can own the dispatch.
 
 ## Roadmap
 

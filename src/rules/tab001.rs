@@ -1,5 +1,5 @@
 use crate::diagnostic::{Diagnostic, Severity};
-use crate::latex::FloatKind;
+use crate::latex::scan::FloatKind;
 use crate::project::ProjectIndex;
 use crate::rules::ProjectRule;
 

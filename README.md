@@ -49,8 +49,17 @@ checked 1 file(s), 0 error(s), 1 warning(s)
 ```
 
 Current implementation status: the core CLI and rule pipeline are in place, with
-`WS001` trailing whitespace as the first proving rule. The checks listed above
-describe the intended MVP and v1.0 roadmap.
+the first Structure & Formatting rules implemented:
+
+- `FMT001`: missing final newline.
+- `FMT002`: repeated blank lines.
+- `SEC001`: skipped section hierarchy level.
+- `SEC002`: empty section.
+- `TXT001`: placeholder text.
+- `TXT002`: repeated word.
+- `WS001`: trailing whitespace.
+
+The checks listed above describe the intended MVP and v1.0 roadmap.
 
 ## Installation
 

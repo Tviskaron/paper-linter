@@ -1,5 +1,7 @@
 # paper-linter
 
+[![CI](https://github.com/Tviskaron/paper-linter/actions/workflows/ci.yml/badge.svg)](https://github.com/Tviskaron/paper-linter/actions/workflows/ci.yml)
+
 An extremely fast linter for LaTeX papers.
 
 `paper-linter` is designed to be 10-100x faster than existing tools while staying simple to install, easy to run, and useful in editors, CI, and pre-commit hooks.
@@ -50,11 +52,15 @@ checked 1 file(s), 0 error(s), 1 warning(s)
 ```
 
 Current implementation status: the core CLI and rule pipeline are in place, with
-`CIT001`-`CIT009` citation checks and the first Structure & Formatting rules
+`CIT001`-`CIT011` citation checks and the first Structure & Formatting rules
 implemented:
 
-- `CIT001`-`CIT009`: citation and bibliography consistency/style checks, with
+- `CIT001`-`CIT011`: citation and bibliography consistency/style checks, with
   `.bbl` fallback for arXiv sources that omit `.bib` files.
+- `CIT009`-`CIT011`: opt-in or `--strict` citation style checks, including
+  collapsible citations, mixed citation command families, and canonical
+  bibliography keys such as `skrynnik2024learn`.
+- `ALG001`: algorithm labels are referenced in text.
 - `FMT001`: missing final newline (opt-in or `--strict`).
 - `FMT002`: repeated blank lines (opt-in or `--strict`).
 - `ENV001`: environment begin/end mismatch.
@@ -63,6 +69,7 @@ implemented:
 - `TEX001`: missing non-breaking space before references or citations.
 - `TXT001`: placeholder text.
 - `TXT002`: repeated word.
+- `LBL001`: unused non-float label (opt-in or `--strict`).
 - `WS001`: trailing whitespace (opt-in or `--strict`).
 
 The remaining checks listed above describe the intended MVP and v1.0 roadmap.
@@ -170,10 +177,15 @@ cargo run -- check paper.tex
 Before committing changes, run:
 
 ```console
-cargo fmt --check
-cargo clippy --all-targets --all-features -- -D warnings
-cargo test --all
+cargo fmt --all --check
+cargo check --all-targets --all-features --locked
+cargo clippy --all-targets --all-features --locked -- -D warnings
+cargo test --all --locked
 ```
+
+GitHub Actions runs the same fast gate on pushes and pull requests, plus a
+local install smoke test. Real-paper corpus checks stay manual so the required
+CI remains deterministic and quick.
 
 For manual real-paper smoke tests, collect local arXiv sources into the ignored
 `sample-corpus/` directory:
@@ -214,7 +226,17 @@ To add a new rule:
    value, and entry in `RULES`.
 5. Add unit tests beside the rule and CLI/integration tests if the rule affects
    command behavior.
-6. Run the verification commands above.
+6. Add a minimized fixture under `fixtures/papers/` when the behavior comes
+   from a real paper or a multi-file project shape.
+7. Run the verification commands above.
+
+Testing checklist for rule changes:
+
+- One focused unit test for detector logic.
+- One negative test for a known false-positive shape.
+- One CLI/integration test when `--select`, `--ignore`, `--strict`, JSON
+  output, project discovery, or exit codes are affected.
+- One minimized paper fixture for real-paper regressions.
 
 Minimal pattern:
 

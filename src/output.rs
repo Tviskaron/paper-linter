@@ -1,5 +1,6 @@
 use serde::Serialize;
 use serde_json::json;
+use std::env;
 use std::path::Path;
 
 use crate::baseline::diagnostic_fingerprint;
@@ -18,7 +19,7 @@ pub fn render_text(result: &CheckResult) -> String {
             .unwrap_or_default();
         output.push_str(&format!(
             "{}:{}:{}: {}[{}] {}{}\n",
-            diagnostic.file.display(),
+            display_path(&diagnostic.file),
             diagnostic.line,
             diagnostic.column,
             diagnostic.severity.as_str(),
@@ -200,7 +201,7 @@ impl<'a> ReadyGroups<'a> {
 fn is_project_risk(code: &str) -> bool {
     matches!(
         &code[..3.min(code.len())],
-        "BIB" | "CIT" | "FIG" | "LBL" | "PRJ" | "REF" | "TAB"
+        "ALG" | "BIB" | "CIT" | "FIG" | "LBL" | "PRJ" | "REF" | "TAB"
     )
 }
 
@@ -224,7 +225,7 @@ fn push_ready_group(output: &mut String, title: &str, diagnostics: &[&Diagnostic
             "- {}[{}] {}:{}:{} {}{}\n",
             diagnostic.severity.as_str(),
             diagnostic.code,
-            diagnostic.file.display(),
+            display_path(&diagnostic.file),
             diagnostic.line,
             diagnostic.column,
             diagnostic.message,
@@ -283,6 +284,20 @@ fn sarif_uri(path: &Path, root: &Path) -> String {
         .join("/")
 }
 
+fn display_path(path: &Path) -> String {
+    if path.is_absolute() {
+        if let Ok(current_dir) = env::current_dir() {
+            if let Ok(relative) = path.strip_prefix(current_dir) {
+                if !relative.as_os_str().is_empty() {
+                    return relative.display().to_string();
+                }
+            }
+        }
+    }
+
+    path.display().to_string()
+}
+
 #[cfg(test)]
 mod tests {
     use std::path::PathBuf;
@@ -290,7 +305,37 @@ mod tests {
     use crate::checker::CheckResult;
     use crate::diagnostic::{Diagnostic, Severity};
 
-    use super::{render_ready_json, render_ready_text, render_sarif};
+    use super::{display_path, render_ready_json, render_ready_text, render_sarif, render_text};
+
+    #[test]
+    fn text_output_uses_paths_relative_to_current_directory() {
+        let path = std::env::current_dir()
+            .unwrap()
+            .join("tmp/sample-paper/root.tex");
+        let result = CheckResult {
+            diagnostics: vec![Diagnostic::new(
+                "LBL001",
+                Severity::Warning,
+                "label 'sec:problem_statement' is never referenced",
+                path,
+                180,
+                29,
+            )],
+            files_checked: 1,
+        };
+
+        let text = render_text(&result);
+
+        assert!(text.starts_with("tmp/sample-paper/root.tex:180:29: warning[LBL001]"));
+        assert!(!text.contains("/tmp/sample-paper/root.tex:180:29"));
+    }
+
+    #[test]
+    fn display_path_keeps_external_absolute_paths() {
+        let path = PathBuf::from("/external/paper/root.tex");
+
+        assert_eq!(display_path(&path), "/external/paper/root.tex");
+    }
 
     #[test]
     fn sarif_output_contains_rules_results_and_fingerprints() {

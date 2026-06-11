@@ -1,3 +1,4 @@
+mod alg001;
 mod cap001;
 mod cap002;
 pub(crate) mod citations;
@@ -120,6 +121,7 @@ static RULES: [&dyn Rule; 22] = [
 ];
 
 static FIG001_RULE: fig001::MissingAsset = fig001::MissingAsset;
+static ALG001_RULE: alg001::OrphanAlgorithm = alg001::OrphanAlgorithm;
 static CAP001_RULE: cap001::MissingCaption = cap001::MissingCaption;
 static CAP002_RULE: cap002::CaptionPunctuation = cap002::CaptionPunctuation;
 static FIG002_RULE: fig002::OrphanFigure = fig002::OrphanFigure;
@@ -133,8 +135,9 @@ static TAB002_RULE: tab002::MissingTableLabel = tab002::MissingTableLabel;
 static LAT001_RULE: lat001::LegacyLatex = lat001::LegacyLatex;
 static LBL001_RULE: lbl001::UnusedLabel = lbl001::UnusedLabel;
 static REF001_RULE: ref001::MissingReferenceTarget = ref001::MissingReferenceTarget;
-static PROJECT_RULES: [&dyn ProjectRule; 14] = [
+static PROJECT_RULES: [&dyn ProjectRule; 15] = [
     &FIG001_RULE,
+    &ALG001_RULE,
     &CAP001_RULE,
     &CAP002_RULE,
     &FIG002_RULE,
@@ -179,7 +182,15 @@ pub struct RuleInfo {
     pub fix: &'static str,
 }
 
-static RULE_INFOS: [RuleInfo; 52] = [
+static RULE_INFOS: [RuleInfo; 54] = [
+    RuleInfo {
+        code: "ALG001",
+        name: "orphan algorithm",
+        default_severity: Severity::Warning,
+        summary: "An algorithm label is not referenced from reachable TeX sources.",
+        why: "Unreferenced algorithms are often stale draft material or missing narrative links in the paper.",
+        fix: "Reference the algorithm with \\ref{...} or remove the unused algorithm/label.",
+    },
     RuleInfo {
         code: "CMT001",
         name: "editorial comment",
@@ -299,6 +310,14 @@ static RULE_INFOS: [RuleInfo; 52] = [
         summary: "A document mixes explicit natbib-style and biblatex-style citation commands.",
         why: "Mixing citation command families often comes from merged drafts and can make citation style package-dependent.",
         fix: "Use one citation package command family consistently.",
+    },
+    RuleInfo {
+        code: "CIT011",
+        name: "non-canonical bibliography key",
+        default_severity: Severity::Warning,
+        summary: "A bibliography key does not follow the firstauthor-year-title convention.",
+        why: "Consistent keys make citations easier to search, review, merge, and compare across papers.",
+        fix: "Rename the bibliography key and matching citations to firstauthorYYYYfirsttitleword, for example skrynnik2024learn.",
     },
     RuleInfo {
         code: "ENV001",
@@ -634,8 +653,8 @@ mod tests {
         assert_eq!(
             codes,
             vec![
-                "FIG001", "CAP001", "CAP002", "FIG002", "FIG003", "FIG004", "FIG005", "FIG006",
-                "FIG007", "TAB001", "TAB002", "LAT001", "REF001", "LBL001"
+                "FIG001", "ALG001", "CAP001", "CAP002", "FIG002", "FIG003", "FIG004", "FIG005",
+                "FIG006", "FIG007", "TAB001", "TAB002", "LAT001", "REF001", "LBL001"
             ]
         );
     }
@@ -669,13 +688,13 @@ mod tests {
         assert_eq!(
             codes,
             vec![
-                "CMT001", "CAP001", "CAP002", "BIB001", "BIB002", "CIT001", "CIT002", "CIT003",
-                "CIT004", "CIT005", "CIT006", "CIT007", "CIT008", "CIT009", "CIT010", "ENV001",
-                "FIG001", "FIG002", "FIG003", "FIG004", "FIG005", "FIG006", "FIG007", "FMT001",
-                "FMT002", "LBL001", "LAT001", "LAT002", "MTH001", "MTH002", "MTH003", "PRJ001",
-                "PRJ002", "PRJ003", "PRJ004", "REF001", "SEC001", "SEC002", "SEC003", "SEC004",
-                "SEC005", "SEC006", "TAB001", "TAB002", "TEX001", "TEX002", "TXT001", "TXT002",
-                "TXT003", "TXT004", "TXT005", "WS001"
+                "ALG001", "CMT001", "CAP001", "CAP002", "BIB001", "BIB002", "CIT001", "CIT002",
+                "CIT003", "CIT004", "CIT005", "CIT006", "CIT007", "CIT008", "CIT009", "CIT010",
+                "CIT011", "ENV001", "FIG001", "FIG002", "FIG003", "FIG004", "FIG005", "FIG006",
+                "FIG007", "FMT001", "FMT002", "LBL001", "LAT001", "LAT002", "MTH001", "MTH002",
+                "MTH003", "PRJ001", "PRJ002", "PRJ003", "PRJ004", "REF001", "SEC001", "SEC002",
+                "SEC003", "SEC004", "SEC005", "SEC006", "TAB001", "TAB002", "TEX001", "TEX002",
+                "TXT001", "TXT002", "TXT003", "TXT004", "TXT005", "WS001"
             ]
         );
     }

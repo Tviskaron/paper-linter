@@ -1,14 +1,31 @@
 pub fn enabled_by_default(code: &str) -> bool {
     !matches!(
         code,
-        "FMT001" | "FMT002" | "TXT003" | "TXT004" | "TXT005" | "CMT001" | "WS001" | "PRJ005"
+        "FMT001"
+            | "FMT002"
+            | "LBL001"
+            | "TXT003"
+            | "TXT004"
+            | "TXT005"
+            | "CMT001"
+            | "WS001"
+            | "PRJ005"
     )
 }
 
 pub fn strict_only(code: &str) -> bool {
     matches!(
         code,
-        "BIB002" | "CIT009" | "CIT010" | "FMT001" | "FMT002" | "TXT005" | "WS001" | "PRJ005"
+        "BIB002"
+            | "CIT009"
+            | "CIT010"
+            | "CIT011"
+            | "FMT001"
+            | "FMT002"
+            | "LBL001"
+            | "TXT005"
+            | "WS001"
+            | "PRJ005"
     )
 }
 
@@ -41,6 +58,7 @@ mod tests {
         assert!(!code_is_enabled("TXT003", &[], &[], false));
         assert!(!code_is_enabled("TXT004", &[], &[], false));
         assert!(!code_is_enabled("CMT001", &[], &[], false));
+        assert!(!code_is_enabled("LBL001", &[], &[], false));
         assert!(!code_is_enabled("WS001", &[], &[], false));
     }
 
@@ -69,6 +87,24 @@ mod tests {
         assert!(code_is_enabled(
             "CIT010",
             &[String::from("CIT010")],
+            &[],
+            false
+        ));
+
+        assert!(!code_is_enabled("CIT011", &[], &[], false));
+        assert!(code_is_enabled("CIT011", &[], &[], true));
+        assert!(code_is_enabled(
+            "CIT011",
+            &[String::from("CIT011")],
+            &[],
+            false
+        ));
+
+        assert!(!code_is_enabled("LBL001", &[], &[], false));
+        assert!(code_is_enabled("LBL001", &[], &[], true));
+        assert!(code_is_enabled(
+            "LBL001",
+            &[String::from("LBL001")],
             &[],
             false
         ));

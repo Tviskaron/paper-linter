@@ -671,7 +671,7 @@ fn find_non_canonical_bibliography_keys(entries: &[&BibEntry]) -> Vec<Diagnostic
             continue;
         };
 
-        if entry.key != expected {
+        if !bibliography_key_matches_canonical(entry.key.as_str(), expected.as_str()) {
             diagnostics.push(
                 Diagnostic::new(
                     "CIT011",
@@ -713,6 +713,35 @@ fn canonical_bibliography_key(entry: &BibEntry) -> Option<String> {
     Some(format!("{surname}{year}{title_word}"))
 }
 
+fn bibliography_key_matches_canonical(key: &str, canonical: &str) -> bool {
+    if key == canonical {
+        return true;
+    }
+
+    let Some((key_prefix, key_title)) = split_key_title_part(key) else {
+        return false;
+    };
+    let Some((canonical_prefix, canonical_title)) = split_key_title_part(canonical) else {
+        return false;
+    };
+
+    key_prefix == canonical_prefix
+        && canonical_title.starts_with(key_title)
+        && (key_title.len() >= 4 || key_title.len() == canonical_title.len())
+}
+
+fn split_key_title_part(key: &str) -> Option<(&str, &str)> {
+    let year_start = key
+        .as_bytes()
+        .windows(4)
+        .position(|window| window.iter().all(u8::is_ascii_digit))?;
+    let title_start = year_start + 4;
+    if title_start >= key.len() {
+        return None;
+    }
+    Some((&key[..title_start], &key[title_start..]))
+}
+
 fn first_four_digit_year(value: &str) -> Option<&str> {
     value
         .as_bytes()
@@ -737,8 +766,16 @@ fn first_author_surname(value: &str) -> Option<String> {
 }
 
 fn first_title_word(value: &str) -> Option<String> {
-    normalize_key_component(value)
-        .and_then(|normalized| normalized.split_whitespace().next().map(str::to_string))
+    normalize_key_component(value).and_then(|normalized| {
+        normalized
+            .split_whitespace()
+            .find(|word| !is_leading_title_stopword(word))
+            .map(str::to_string)
+    })
+}
+
+fn is_leading_title_stopword(word: &str) -> bool {
+    matches!(word, "a" | "an" | "the" | "on")
 }
 
 fn normalize_key_component(value: &str) -> Option<String> {
@@ -756,6 +793,10 @@ fn normalize_key_component(value: &str) -> Option<String> {
                 continue;
             }
             command = false;
+        }
+
+        if character == '-' {
+            continue;
         }
 
         if character.is_ascii_alphanumeric() {
@@ -1298,6 +1339,82 @@ mod tests {
         let entries = parse_bib_entries(
             Path::new("refs.bib"),
             r"@article{smith2024efficient, author={Jane Smith}, title={Efficient Planning}, journal={J}, year={2024}}",
+        );
+        let scoped_entries = entries.iter().collect::<Vec<_>>();
+
+        assert!(find_non_canonical_bibliography_keys(&scoped_entries).is_empty());
+    }
+
+    #[test]
+    fn skips_leading_title_articles_for_canonical_keys() {
+        let entries = parse_bib_entries(
+            Path::new("refs.bib"),
+            r"@article{silver2018general,
+  title={A general reinforcement learning algorithm that masters chess, shogi, and Go through self-play},
+  author={Silver, David},
+  journal={Science},
+  year={2018}
+}",
+        );
+
+        assert_eq!(
+            canonical_bibliography_key(&entries[0]).as_deref(),
+            Some("silver2018general")
+        );
+    }
+
+    #[test]
+    fn skips_leading_on_the_for_canonical_keys() {
+        let entries = parse_bib_entries(
+            Path::new("refs.bib"),
+            r"@inproceedings{pallagani2024prospects,
+  title={On the Prospects of Incorporating Large Language Models ({LLMs}) in Automated Planning and Scheduling ({APS})},
+  author={Pallagani, Vishal},
+  booktitle={Proceedings of the International Conference on Automated Planning and Scheduling},
+  year={2024}
+}",
+        );
+
+        assert_eq!(
+            canonical_bibliography_key(&entries[0]).as_deref(),
+            Some("pallagani2024prospects")
+        );
+    }
+
+    #[test]
+    fn joins_hyphenated_title_words_for_canonical_keys() {
+        let entries = parse_bib_entries(
+            Path::new("refs.bib"),
+            r"@inproceedings{wang2023selfconsistency,
+  title={Self-Consistency Improves Chain of Thought Reasoning in Language Models},
+  author={Xuezhi Wang and Jason Wei},
+  booktitle={The Eleventh International Conference on Learning Representations},
+  year={2023}
+}",
+        );
+
+        assert_eq!(
+            canonical_bibliography_key(&entries[0]).as_deref(),
+            Some("wang2023selfconsistency")
+        );
+    }
+
+    #[test]
+    fn accepts_shortened_compound_title_words_for_canonical_keys() {
+        let entries = parse_bib_entries(
+            Path::new("refs.bib"),
+            r"@article{wei2022chain,
+  title={Chain-of-Thought Prompting Elicits Reasoning in Large Language Models},
+  author={Wei, Jason},
+  journal={NeurIPS},
+  year={2022}
+}
+@article{guo2025deepseek,
+  title={DeepSeek-R1: Incentivizing Reasoning Capability in LLMs via Reinforcement Learning},
+  author={Guo, Daya},
+  journal={arXiv},
+  year={2025}
+}",
         );
         let scoped_entries = entries.iter().collect::<Vec<_>>();
 

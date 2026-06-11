@@ -6,14 +6,20 @@ pub fn render_text(result: &CheckResult) -> String {
     let mut output = String::new();
 
     for diagnostic in &result.diagnostics {
+        let hint = diagnostic
+            .hint
+            .as_ref()
+            .map(|hint| format!("; hint: {hint}"))
+            .unwrap_or_default();
         output.push_str(&format!(
-            "{}:{}:{}: {}[{}] {}\n",
+            "{}:{}:{}: {}[{}] {}{}\n",
             diagnostic.file.display(),
             diagnostic.line,
             diagnostic.column,
             diagnostic.severity.as_str(),
             diagnostic.code,
-            diagnostic.message
+            diagnostic.message,
+            hint
         ));
     }
 

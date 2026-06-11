@@ -1,11 +1,11 @@
 use std::fmt;
-use std::fs;
 use std::io;
 use std::path::PathBuf;
 
 use crate::diagnostic::{Diagnostic, Severity};
 use crate::discovery::discover_tex_files;
-use crate::rules::all_rules;
+use crate::project::ProjectIndex;
+use crate::rules::{all_project_rules, all_rules};
 
 #[derive(Debug, Clone)]
 pub struct CheckOptions {
@@ -64,19 +64,32 @@ pub fn run_check(options: &CheckOptions) -> Result<CheckResult, ToolError> {
         .map_err(|source| ToolError::Io { path: None, source })?;
     let mut diagnostics = Vec::new();
 
-    for file in &files {
-        let content = fs::read_to_string(file).map_err(|source| ToolError::Io {
-            path: Some(file.clone()),
-            source,
-        })?;
+    if files.is_empty() {
+        return Ok(CheckResult {
+            diagnostics,
+            files_checked: 0,
+        });
+    }
 
+    let project = ProjectIndex::build(&options.paths, &files)
+        .map_err(|source| ToolError::Io { path: None, source })?;
+
+    for file in &project.files {
         for rule in all_rules() {
             if !rule_is_enabled(rule.code(), &options.select, &options.ignore) {
                 continue;
             }
 
-            diagnostics.extend(rule.check_file(file, &content));
+            diagnostics.extend(rule.check_file(&file.path, &file.content));
         }
+    }
+
+    for rule in all_project_rules() {
+        if !rule_is_enabled(rule.code(), &options.select, &options.ignore) {
+            continue;
+        }
+
+        diagnostics.extend(rule.check_project(&project));
     }
 
     if options.strict {
@@ -97,7 +110,7 @@ pub fn run_check(options: &CheckOptions) -> Result<CheckResult, ToolError> {
 
     Ok(CheckResult {
         diagnostics,
-        files_checked: files.len(),
+        files_checked: project.files.len(),
     })
 }
 
@@ -114,6 +127,7 @@ mod tests {
     #[test]
     fn select_defaults_to_all_rules() {
         assert!(rule_is_enabled("WS001", &[], &[]));
+        assert!(rule_is_enabled("FIG001", &[], &[]));
     }
 
     #[test]

@@ -268,6 +268,11 @@ mod tests {
             .expect("project should index");
 
         assert_eq!(index.graphics.len(), 1);
-        assert_eq!(index.resolve_graphic(&index.graphics[0]), Some(asset));
+        assert_eq!(
+            index
+                .resolve_graphic(&index.graphics[0])
+                .and_then(|path| path.canonicalize().ok()),
+            asset.canonicalize().ok()
+        );
     }
 }

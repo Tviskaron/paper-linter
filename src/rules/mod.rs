@@ -1,7 +1,7 @@
 mod cap001;
 mod cap002;
-mod cmt001;
 pub(crate) mod citations;
+mod cmt001;
 mod env001;
 mod fig001;
 mod fig002;
@@ -14,11 +14,11 @@ mod fmt002;
 mod lat001;
 mod lat002;
 mod lbl001;
+mod mth001;
 mod prj001;
 mod prj002;
 mod prj003;
 mod prj004;
-mod mth001;
 mod ref001;
 mod sec001;
 mod sec002;
@@ -136,12 +136,8 @@ static PRJ001_RULE: prj001::MissingInclude = prj001::MissingInclude;
 static PRJ002_RULE: prj002::AmbiguousRoot = prj002::AmbiguousRoot;
 static PRJ003_RULE: prj003::RootNotFound = prj003::RootNotFound;
 static PRJ004_RULE: prj004::OrphanTex = prj004::OrphanTex;
-static GRAPH_PROJECT_RULES: [&dyn GraphProjectRule; 4] = [
-    &PRJ001_RULE,
-    &PRJ002_RULE,
-    &PRJ003_RULE,
-    &PRJ004_RULE,
-];
+static GRAPH_PROJECT_RULES: [&dyn GraphProjectRule; 4] =
+    [&PRJ001_RULE, &PRJ002_RULE, &PRJ003_RULE, &PRJ004_RULE];
 
 pub fn all_rules() -> &'static [&'static dyn Rule] {
     &RULES
@@ -524,7 +520,10 @@ pub fn find_rule_info(code: &str) -> Option<&'static RuleInfo> {
 
 #[cfg(test)]
 mod tests {
-    use super::{all_graph_project_rules, all_project_rules, all_rules, find_rule_info, rule_infos, GraphProjectRule, ProjectRule, Rule};
+    use super::{
+        all_graph_project_rules, all_project_rules, all_rules, find_rule_info, rule_infos,
+        GraphProjectRule, ProjectRule, Rule,
+    };
 
     #[test]
     fn rule_registry_contains_rules() {

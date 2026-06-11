@@ -54,21 +54,27 @@ impl Rule for FillerWords {
         prose_spans(content)
             .into_iter()
             .flat_map(|span| {
-                prose_words(&span).into_iter().filter_map(move |(word, column)| {
-                    if is_filler(&word) {
-                        Some(Diagnostic::new(
-                            self.code(),
-                            Severity::Warning,
-                            format!("filler word '{word}'"),
-                            path,
-                            span.line,
-                            column,
-                        )
-                        .with_hint("consider removing the filler or using stronger wording"))
-                    } else {
-                        None
-                    }
-                })
+                prose_words(&span)
+                    .into_iter()
+                    .filter_map(move |(word, column)| {
+                        if is_filler(&word) {
+                            Some(
+                                Diagnostic::new(
+                                    self.code(),
+                                    Severity::Warning,
+                                    format!("filler word '{word}'"),
+                                    path,
+                                    span.line,
+                                    column,
+                                )
+                                .with_hint(
+                                    "consider removing the filler or using stronger wording",
+                                ),
+                            )
+                        } else {
+                            None
+                        }
+                    })
             })
             .collect()
     }

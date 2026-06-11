@@ -5,14 +5,7 @@ use crate::latex::prose::prose_spans;
 use crate::rules::Rule;
 
 const PASSIVE_PATTERNS: &[&str] = &[
-    " am ",
-    " is ",
-    " are ",
-    " was ",
-    " were ",
-    " be ",
-    " been ",
-    " being ",
+    " am ", " is ", " are ", " was ", " were ", " be ", " been ", " being ",
 ];
 
 const PARTICIPLES: &[&str] = &[
@@ -71,9 +64,14 @@ fn passive_match_column(original: &str, padded: &str) -> Option<usize> {
             continue;
         };
         let after = &padded[index + pattern.len()..];
-        if PARTICIPLES.iter().any(|participle| after.contains(participle))
+        if PARTICIPLES
+            .iter()
+            .any(|participle| after.contains(participle))
             || after.contains(" by ")
-            || after.split_whitespace().next().is_some_and(|word| word.ends_with("ed"))
+            || after
+                .split_whitespace()
+                .next()
+                .is_some_and(|word| word.ends_with("ed"))
         {
             return Some(index.max(1) - 1);
         }

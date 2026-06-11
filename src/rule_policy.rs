@@ -10,12 +10,7 @@ pub fn never_promote_to_error(code: &str) -> bool {
     matches!(code, "TXT005")
 }
 
-pub fn code_is_enabled(
-    code: &str,
-    select: &[String],
-    ignore: &[String],
-    strict: bool,
-) -> bool {
+pub fn code_is_enabled(code: &str, select: &[String], ignore: &[String], strict: bool) -> bool {
     if strict_only(code) {
         if select.is_empty() && !strict {
             return false;

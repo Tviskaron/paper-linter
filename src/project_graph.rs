@@ -13,6 +13,9 @@ const MAIN_LIKE_NAMES: [&str; 5] = [
     "ms.tex",
 ];
 
+type IncludeEdges = Vec<(PathBuf, PathBuf)>;
+type IncludeMap = BTreeMap<PathBuf, BTreeSet<PathBuf>>;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum RootMethod {
@@ -177,7 +180,10 @@ fn root_from_magic_comment(_paper_dir: &Path, all_tex: &BTreeSet<PathBuf>) -> Op
                 continue;
             };
             let rest = rest.trim();
-            let Some(rest) = rest.strip_prefix("root").or_else(|| rest.strip_prefix("Root")) else {
+            let Some(rest) = rest
+                .strip_prefix("root")
+                .or_else(|| rest.strip_prefix("Root"))
+            else {
                 continue;
             };
             let rest = rest.trim().trim_start_matches('=').trim();
@@ -203,7 +209,11 @@ fn choose_root_candidate(candidates: &[PathBuf], paper_dir: &Path) -> Option<Pat
     let paper_root = paper_dir.canonicalize().ok()?;
     let top_level: Vec<_> = candidates
         .iter()
-        .filter(|path| path.parent().map(|parent| parent == paper_root).unwrap_or(false))
+        .filter(|path| {
+            path.parent()
+                .map(|parent| parent == paper_root)
+                .unwrap_or(false)
+        })
         .cloned()
         .collect();
     let pool = if top_level.is_empty() {
@@ -227,29 +237,32 @@ fn choose_root_candidate(candidates: &[PathBuf], paper_dir: &Path) -> Option<Pat
     let (included_by, outgoing) = build_include_graph_for_candidates(paper_dir, &pool);
     let independent: Vec<_> = pool
         .iter()
-        .filter(|path| included_by.get(*path).is_none_or(|parents| parents.is_empty()))
+        .filter(|path| {
+            included_by
+                .get(*path)
+                .is_none_or(|parents| parents.is_empty())
+        })
         .cloned()
         .collect();
-    let pool = if independent.len() == 1 {
-        independent
-    } else if !independent.is_empty() {
+    let pool = if !independent.is_empty() {
         independent
     } else {
         pool
     };
 
-    pool.into_iter()
-        .max_by_key(|path| (outgoing.get(path).map(|set| set.len()).unwrap_or(0), path.clone()))
+    pool.into_iter().max_by_key(|path| {
+        (
+            outgoing.get(path).map(|set| set.len()).unwrap_or(0),
+            path.clone(),
+        )
+    })
 }
 
 fn build_include_graph_for_candidates(
     paper_dir: &Path,
     candidates: &[PathBuf],
-) -> (BTreeMap<PathBuf, BTreeSet<PathBuf>>, BTreeMap<PathBuf, BTreeSet<PathBuf>>) {
-    let all_tex = candidates
-        .iter()
-        .cloned()
-        .collect::<BTreeSet<_>>();
+) -> (IncludeMap, IncludeMap) {
+    let all_tex = candidates.iter().cloned().collect::<BTreeSet<_>>();
     let (edges, _) = build_include_graph(paper_dir, &all_tex);
     let mut included_by = BTreeMap::new();
     let mut outgoing = BTreeMap::new();
@@ -266,7 +279,10 @@ fn build_include_graph_for_candidates(
     (included_by, outgoing)
 }
 
-fn root_from_primary_roots(paper_dir: &Path, all_tex: &BTreeSet<PathBuf>) -> (Option<PathBuf>, Vec<PathBuf>) {
+fn root_from_primary_roots(
+    paper_dir: &Path,
+    all_tex: &BTreeSet<PathBuf>,
+) -> (Option<PathBuf>, Vec<PathBuf>) {
     let paper_root = paper_dir.canonicalize().ok();
     let mut document_roots = Vec::new();
 
@@ -389,9 +405,9 @@ fn resolve_root(
 fn build_include_graph(
     _paper_dir: &Path,
     all_tex: &BTreeSet<PathBuf>,
-) -> (Vec<(PathBuf, PathBuf)>, BTreeMap<PathBuf, BTreeSet<PathBuf>>) {
+) -> (IncludeEdges, IncludeMap) {
     let mut edges = Vec::new();
-    let mut included_by: BTreeMap<PathBuf, BTreeSet<PathBuf>> = BTreeMap::new();
+    let mut included_by: IncludeMap = BTreeMap::new();
 
     for path in all_tex {
         included_by.entry(path.clone()).or_default();
@@ -541,7 +557,11 @@ fn read_required_argument(content: &str, mut offset: usize) -> Option<(usize, us
 }
 
 fn skip_ascii_whitespace(content: &str, mut offset: usize) -> usize {
-    while content.as_bytes().get(offset).is_some_and(|byte| byte.is_ascii_whitespace()) {
+    while content
+        .as_bytes()
+        .get(offset)
+        .is_some_and(|byte| byte.is_ascii_whitespace())
+    {
         offset += 1;
     }
     offset
@@ -655,7 +675,10 @@ mod tests {
         let dir = temp_project("orphan");
         let main = dir.join("paper.tex");
         let orphan = dir.join("old-draft.tex");
-        write(&main, "\\documentclass{article}\n\\begin{document}\nHi\n\\end{document}\n");
+        write(
+            &main,
+            "\\documentclass{article}\n\\begin{document}\nHi\n\\end{document}\n",
+        );
         write(&orphan, "\\section{Draft}\n");
 
         let graph = ProjectGraph::analyze(&dir).expect("analyze");

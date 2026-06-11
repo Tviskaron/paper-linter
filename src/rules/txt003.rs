@@ -22,7 +22,10 @@ impl Rule for LongSentence {
     }
 
     fn check_file(&self, path: &Path, content: &str) -> Vec<Diagnostic> {
-        if path.extension().is_some_and(|ext| ext.eq_ignore_ascii_case("bbl")) {
+        if path
+            .extension()
+            .is_some_and(|ext| ext.eq_ignore_ascii_case("bbl"))
+        {
             return Vec::new();
         }
 
@@ -66,8 +69,7 @@ mod tests {
 
     #[test]
     fn ignores_short_sentence() {
-        let diagnostics =
-            LongSentence.check_file(Path::new("paper.tex"), "This is short.\n");
+        let diagnostics = LongSentence.check_file(Path::new("paper.tex"), "This is short.\n");
         assert!(diagnostics.is_empty());
     }
 }

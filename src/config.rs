@@ -25,11 +25,7 @@ impl LinterConfig {
         Self::load(&path)
     }
 
-    pub fn merge_into_options(
-        &self,
-        select: &mut Vec<String>,
-        ignore: &mut Vec<String>,
-    ) {
+    pub fn merge_into_options(&self, select: &mut Vec<String>, ignore: &mut Vec<String>) {
         for code in &self.enable {
             if !select.iter().any(|existing| existing.starts_with(code)) {
                 select.push(code.clone());
@@ -146,10 +142,18 @@ pub fn is_enabled_with_config(
     strict: bool,
     config: &LinterConfig,
 ) -> bool {
-    if config.disable.iter().any(|pattern| code.starts_with(pattern)) {
+    if config
+        .disable
+        .iter()
+        .any(|pattern| code.starts_with(pattern))
+    {
         return false;
     }
-    if config.enable.iter().any(|pattern| code.starts_with(pattern)) {
+    if config
+        .enable
+        .iter()
+        .any(|pattern| code.starts_with(pattern))
+    {
         return rule_policy::code_is_enabled(code, select, ignore, strict) || select.is_empty();
     }
     rule_policy::code_is_enabled(code, select, ignore, strict)
@@ -161,10 +165,9 @@ mod tests {
 
     #[test]
     fn parses_enable_rules() {
-        let config = parse_toml(
-            "[rules]\nenable = [\"TXT003\", \"TXT004\"]\ndisable = [\"CIT002\"]\n",
-        )
-        .expect("parse");
+        let config =
+            parse_toml("[rules]\nenable = [\"TXT003\", \"TXT004\"]\ndisable = [\"CIT002\"]\n")
+                .expect("parse");
         assert_eq!(config.enable, vec!["TXT003", "TXT004"]);
         assert_eq!(config.disable, vec!["CIT002"]);
     }

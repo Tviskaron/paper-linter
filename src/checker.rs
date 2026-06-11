@@ -13,7 +13,7 @@ use crate::rules::citations::{check_project, explicit_bib_files, SourceFile};
 use crate::rules::{all_graph_project_rules, all_project_rules, all_rules};
 use crate::suppressions::Suppressions;
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct CheckOptions {
     pub paths: Vec<PathBuf>,
     pub select: Vec<String>,
@@ -22,20 +22,6 @@ pub struct CheckOptions {
     pub all_tex: bool,
     pub baseline: Option<PathBuf>,
     pub config: LinterConfig,
-}
-
-impl Default for CheckOptions {
-    fn default() -> Self {
-        Self {
-            paths: Vec::new(),
-            select: Vec::new(),
-            ignore: Vec::new(),
-            strict: false,
-            all_tex: false,
-            baseline: None,
-            config: LinterConfig::default(),
-        }
-    }
 }
 
 #[derive(Debug, Clone)]
@@ -119,11 +105,7 @@ pub fn run_check(options: &CheckOptions) -> Result<CheckResult, ToolError> {
     if let Some(project) = &project {
         for file in &project.files {
             for rule in all_rules() {
-                if !rule_is_enabled(
-                    rule.code(),
-                    rule.strict_only(),
-                    options,
-                ) {
+                if !rule_is_enabled(rule.code(), rule.strict_only(), options) {
                     continue;
                 }
 
@@ -137,11 +119,7 @@ pub fn run_check(options: &CheckOptions) -> Result<CheckResult, ToolError> {
         }
 
         for rule in all_project_rules() {
-            if !rule_is_enabled(
-                rule.code(),
-                rule.strict_only(),
-                options,
-            ) {
+            if !rule_is_enabled(rule.code(), rule.strict_only(), options) {
                 continue;
             }
 
@@ -204,7 +182,10 @@ pub fn run_check(options: &CheckOptions) -> Result<CheckResult, ToolError> {
 
     Ok(CheckResult {
         diagnostics,
-        files_checked: project.as_ref().map(|project| project.files.len()).unwrap_or(0),
+        files_checked: project
+            .as_ref()
+            .map(|project| project.files.len())
+            .unwrap_or(0),
     })
 }
 

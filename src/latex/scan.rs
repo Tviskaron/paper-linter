@@ -1,4 +1,4 @@
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SourceLocation {
@@ -224,9 +224,20 @@ pub fn scan_latex(file: impl Into<PathBuf>, content: &str) -> ScanResult {
             }
             "caption" => {
                 let arg_start = skip_optional_args(content, after_command);
-                if let Some((text, end)) = parse_required_arg(content, arg_start) {
+                if let Some((text, body_start, body_end, end)) =
+                    parse_required_arg_with_bounds(content, arg_start)
+                {
                     let caption = Caption { text, location };
                     attach_caption(&mut stack, caption.clone());
+                    collect_labels_in_range(
+                        content,
+                        body_start,
+                        body_end,
+                        &line_starts,
+                        &file,
+                        &mut stack,
+                        &mut result,
+                    );
                     index = end;
                 } else {
                     index = after_command;
@@ -346,6 +357,61 @@ fn attach_graphic(stack: &mut [ActiveEnv], graphic: Graphic) {
     }
 }
 
+fn collect_labels_in_range(
+    content: &str,
+    start: usize,
+    end: usize,
+    line_starts: &[usize],
+    file: &Path,
+    stack: &mut [ActiveEnv],
+    result: &mut ScanResult,
+) {
+    let bytes = content.as_bytes();
+    let mut index = start;
+
+    while index < end {
+        if bytes[index] == b'%' && !is_escaped(bytes, index) {
+            index = skip_comment(bytes, index).min(end);
+            continue;
+        }
+
+        if bytes[index] != b'\\' {
+            index += 1;
+            continue;
+        }
+
+        let command_start = index;
+        let Some((command, after_command)) = parse_command_name(content, index) else {
+            index += 1;
+            continue;
+        };
+
+        if command != "label" {
+            index = after_command.min(end);
+            continue;
+        }
+
+        let Some((key, label_end)) = parse_required_arg(content, after_command) else {
+            index = after_command.min(end);
+            continue;
+        };
+        if label_end > end {
+            index = after_command.min(end);
+            continue;
+        }
+
+        let (line, column) = line_column(line_starts, command_start);
+        let label = Label {
+            key,
+            kind: LabelKind::from(current_float_kind(stack)),
+            location: SourceLocation::new(file.to_path_buf(), line, column),
+        };
+        attach_label(stack, label.clone());
+        result.labels.push(label);
+        index = label_end;
+    }
+}
+
 fn current_float_kind(stack: &[ActiveEnv]) -> Option<FloatKind> {
     stack.iter().rev().find_map(|env| env.kind)
 }
@@ -369,6 +435,13 @@ fn parse_command_name(content: &str, start: usize) -> Option<(String, usize)> {
 }
 
 fn parse_required_arg(content: &str, start: usize) -> Option<(String, usize)> {
+    parse_required_arg_with_bounds(content, start).map(|(value, _, _, end)| (value, end))
+}
+
+fn parse_required_arg_with_bounds(
+    content: &str,
+    start: usize,
+) -> Option<(String, usize, usize, usize)> {
     let bytes = content.as_bytes();
     let open = skip_ws(bytes, start);
     if bytes.get(open) != Some(&b'{') {
@@ -389,7 +462,12 @@ fn parse_required_arg(content: &str, start: usize) -> Option<(String, usize)> {
             b'}' => {
                 depth -= 1;
                 if depth == 0 {
-                    return Some((content[open + 1..index].trim().to_string(), index + 1));
+                    return Some((
+                        content[open + 1..index].trim().to_string(),
+                        open + 1,
+                        index,
+                        index + 1,
+                    ));
                 }
                 index += 1;
             }
@@ -626,6 +704,21 @@ mod tests {
         assert_eq!(scan.floats[0].captions[0].text, "Long");
         assert_eq!(scan.floats[0].labels[0].key, "fig:model");
         assert_eq!(scan.labels[0].kind, LabelKind::Figure);
+    }
+
+    #[test]
+    fn collects_labels_inside_captions() {
+        let scan = scan_latex(
+            Path::new("paper.tex"),
+            "\\begin{figure}\n\\includegraphics{model}\n\\caption{\\label{fig:model} Model.}\n\\end{figure}\nSee Figure~\\ref{fig:model}.\n",
+        );
+
+        assert_eq!(scan.labels.len(), 1);
+        assert_eq!(scan.labels[0].key, "fig:model");
+        assert_eq!(scan.labels[0].kind, LabelKind::Figure);
+        assert_eq!(scan.floats.len(), 1);
+        assert_eq!(scan.floats[0].labels[0].key, "fig:model");
+        assert_eq!(scan.refs[0].key, "fig:model");
     }
 
     #[test]

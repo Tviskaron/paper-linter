@@ -101,10 +101,7 @@ fn prose_start_column(line: &str) -> usize {
         return 1;
     }
     let leading_spaces = prose.len() - prose.trim_start().len();
-    line[..leading_spaces.min(line.len())]
-        .chars()
-        .count()
-        + 1
+    line[..leading_spaces.min(line.len())].chars().count() + 1
 }
 
 fn split_sentences(text: &str) -> Vec<(String, usize, usize)> {
@@ -119,7 +116,11 @@ fn split_sentences(text: &str) -> Vec<(String, usize, usize)> {
             let sentence_text = sentence_text.trim().to_string();
             if !sentence_text.is_empty() {
                 let start_column = chars[..start].len() + 1;
-                sentences.push((sentence_text.clone(), start_column, word_count(&sentence_text)));
+                sentences.push((
+                    sentence_text.clone(),
+                    start_column,
+                    word_count(&sentence_text),
+                ));
             }
             start = end;
             while start < chars.len() && chars[start].is_whitespace() {

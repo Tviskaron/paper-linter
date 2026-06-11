@@ -126,7 +126,9 @@ pub fn run_check(options: &CheckOptions) -> Result<CheckResult, ToolError> {
         diagnostics.extend(rule.check_project(&project));
     }
 
-    if family_may_be_enabled("CIT", &options.select, &options.ignore) {
+    if family_may_be_enabled("CIT", &options.select, &options.ignore)
+        || family_may_be_enabled("BIB", &options.select, &options.ignore)
+    {
         let explicit_bibs = explicit_bib_files(&options.paths);
         let citation_diagnostics = check_project(&sources, &explicit_bibs)
             .map_err(|source| ToolError::Io { path: None, source })?;

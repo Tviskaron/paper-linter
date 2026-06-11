@@ -127,7 +127,7 @@ pub struct RuleInfo {
     pub fix: &'static str,
 }
 
-static RULE_INFOS: [RuleInfo; 35] = [
+static RULE_INFOS: [RuleInfo; 36] = [
     RuleInfo {
         code: "CAP001",
         name: "caption missing",
@@ -143,6 +143,14 @@ static RULE_INFOS: [RuleInfo; 35] = [
         summary: "A figure or table caption does not end with sentence punctuation.",
         why: "Some venues and paper style guides expect captions to read as complete punctuated sentences.",
         fix: "End the caption with '.', '?', or '!'.",
+    },
+    RuleInfo {
+        code: "BIB001",
+        name: "bibliography identifier syntax",
+        default_severity: Severity::Warning,
+        summary: "A bibliography entry has a malformed DOI, URL, or arXiv identifier.",
+        why: "Malformed bibliography identifiers break publisher metadata, links, and citation exports.",
+        fix: "Fix the DOI, URL, or arXiv identifier syntax in the .bib entry.",
     },
     RuleInfo {
         code: "CIT001",
@@ -465,11 +473,11 @@ mod tests {
         assert_eq!(
             codes,
             vec![
-                "CAP001", "CAP002", "CIT001", "CIT002", "CIT003", "CIT004", "CIT005", "CIT006",
-                "CIT007", "CIT008", "CIT009", "ENV001", "FIG001", "FIG002", "FIG003", "FIG004",
-                "FIG005", "FIG006", "FMT001", "FMT002", "LBL001", "LAT001", "LAT002", "MTH001",
-                "REF001", "SEC001", "SEC002", "SEC003", "SEC004", "TAB001", "TAB002", "TEX001",
-                "TXT001", "TXT002", "WS001"
+                "CAP001", "CAP002", "BIB001", "CIT001", "CIT002", "CIT003", "CIT004", "CIT005",
+                "CIT006", "CIT007", "CIT008", "CIT009", "ENV001", "FIG001", "FIG002", "FIG003",
+                "FIG004", "FIG005", "FIG006", "FMT001", "FMT002", "LBL001", "LAT001", "LAT002",
+                "MTH001", "REF001", "SEC001", "SEC002", "SEC003", "SEC004", "TAB001", "TAB002",
+                "TEX001", "TXT001", "TXT002", "WS001"
             ]
         );
     }

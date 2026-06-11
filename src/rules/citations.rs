@@ -232,6 +232,7 @@ pub fn check_project(
         }
     }
 
+    diagnostics.extend(find_invalid_bibliography_metadata(&scoped_entries));
     diagnostics.extend(find_duplicate_keys(&scoped_entries));
     diagnostics.extend(find_similar_titles(&scoped_entries));
 
@@ -400,6 +401,148 @@ fn has_venue_field(entry: &BibEntry) -> bool {
             | "techreport"
             | "misc"
     )
+}
+
+fn find_invalid_bibliography_metadata(entries: &[&BibEntry]) -> Vec<Diagnostic> {
+    let mut diagnostics = Vec::new();
+
+    for &entry in entries {
+        for (field, value) in &entry.fields {
+            let normalized = normalize_braced_value(value);
+            let message = match field.as_str() {
+                "doi" if !is_valid_doi(&normalized) => Some(format!(
+                    "bibliography entry '{}' has invalid DOI '{}'",
+                    entry.key, normalized
+                )),
+                "url" if !is_valid_url(&normalized) => Some(format!(
+                    "bibliography entry '{}' has invalid URL '{}'",
+                    entry.key, normalized
+                )),
+                "eprint" if entry_has_arxiv_prefix(entry) && !is_valid_arxiv_id(&normalized) => {
+                    Some(format!(
+                        "bibliography entry '{}' has invalid arXiv id '{}'",
+                        entry.key, normalized
+                    ))
+                }
+                _ => None,
+            };
+
+            if let Some(message) = message {
+                diagnostics.push(
+                    Diagnostic::new(
+                        "BIB001",
+                        Severity::Warning,
+                        message,
+                        &entry.file,
+                        entry.line,
+                        entry.column,
+                    )
+                    .with_hint("fix the bibliography identifier syntax"),
+                );
+            }
+        }
+    }
+
+    diagnostics
+}
+
+fn normalize_braced_value(value: &str) -> String {
+    value
+        .trim()
+        .trim_start_matches('{')
+        .trim_end_matches('}')
+        .trim()
+        .to_string()
+}
+
+fn is_valid_doi(value: &str) -> bool {
+    let doi = value
+        .strip_prefix("https://doi.org/")
+        .or_else(|| value.strip_prefix("http://doi.org/"))
+        .or_else(|| value.strip_prefix("doi:"))
+        .unwrap_or(value);
+
+    doi.starts_with("10.")
+        && doi.contains('/')
+        && !doi.chars().any(char::is_whitespace)
+        && doi.split_once('/').is_some_and(|(prefix, suffix)| {
+            prefix.len() > 3
+                && prefix[3..].chars().all(|ch| ch.is_ascii_digit())
+                && !suffix.is_empty()
+        })
+}
+
+fn is_valid_url(value: &str) -> bool {
+    if value.starts_with("\\url{") && value.ends_with('}') {
+        return true;
+    }
+
+    let Some((scheme, rest)) = value.split_once(':') else {
+        return false;
+    };
+    matches!(scheme, "http" | "https" | "ftp" | "mailto")
+        && !rest.is_empty()
+        && !value.chars().any(char::is_whitespace)
+}
+
+fn entry_has_arxiv_prefix(entry: &BibEntry) -> bool {
+    entry
+        .fields
+        .get("archiveprefix")
+        .or_else(|| entry.fields.get("archivePrefix"))
+        .is_some_and(|value| normalize_braced_value(value).eq_ignore_ascii_case("arxiv"))
+}
+
+fn is_valid_arxiv_id(value: &str) -> bool {
+    let value = value.strip_prefix("arXiv:").unwrap_or(value);
+    is_new_arxiv_id(value) || is_old_arxiv_id(value)
+}
+
+fn is_new_arxiv_id(value: &str) -> bool {
+    let (main, version) = split_arxiv_version(value);
+    if version.is_some_and(|version| !is_positive_version(version)) {
+        return false;
+    }
+
+    let Some((year_month, number)) = main.split_once('.') else {
+        return false;
+    };
+    year_month.len() == 4
+        && year_month.chars().all(|ch| ch.is_ascii_digit())
+        && matches!(number.len(), 4 | 5)
+        && number.chars().all(|ch| ch.is_ascii_digit())
+}
+
+fn is_old_arxiv_id(value: &str) -> bool {
+    let (main, version) = split_arxiv_version(value);
+    if version.is_some_and(|version| !is_positive_version(version)) {
+        return false;
+    }
+
+    let Some((archive, number)) = main.split_once('/') else {
+        return false;
+    };
+    !archive.is_empty()
+        && archive
+            .chars()
+            .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '-' | '.'))
+        && number.len() == 7
+        && number.chars().all(|ch| ch.is_ascii_digit())
+}
+
+fn split_arxiv_version(value: &str) -> (&str, Option<&str>) {
+    let Some(index) = value.rfind('v') else {
+        return (value, None);
+    };
+    let version = &value[index + 1..];
+    if version.is_empty() || !version.chars().all(|ch| ch.is_ascii_digit()) {
+        return (value, None);
+    }
+    (&value[..index], Some(version))
+}
+
+fn is_positive_version(version: &str) -> bool {
+    version.parse::<usize>().is_ok_and(|version| version > 0)
 }
 
 fn find_duplicate_keys(entries: &[&BibEntry]) -> Vec<Diagnostic> {
@@ -797,8 +940,8 @@ mod tests {
     use std::path::Path;
 
     use super::{
-        bibtex::parse_bib_entries, find_duplicate_keys, missing_required_fields,
-        scoped_bibliography_entries,
+        bibtex::parse_bib_entries, find_duplicate_keys, is_valid_arxiv_id, is_valid_doi,
+        is_valid_url, missing_required_fields, scoped_bibliography_entries,
     };
 
     #[test]
@@ -850,5 +993,20 @@ mod tests {
 
         assert!(missing_required_fields(&entries[0]).is_empty());
         assert!(missing_required_fields(&entries[1]).is_empty());
+    }
+
+    #[test]
+    fn validates_bibliography_identifier_syntax() {
+        assert!(is_valid_doi("10.1145/1234567.8901234"));
+        assert!(is_valid_doi("https://doi.org/10.1000/example"));
+        assert!(!is_valid_doi("not-a-doi"));
+
+        assert!(is_valid_url("https://example.com/paper"));
+        assert!(is_valid_url("mailto:author@example.com"));
+        assert!(!is_valid_url("example dot com"));
+
+        assert!(is_valid_arxiv_id("2401.00001v2"));
+        assert!(is_valid_arxiv_id("hep-th/9901001"));
+        assert!(!is_valid_arxiv_id("bad-id"));
     }
 }

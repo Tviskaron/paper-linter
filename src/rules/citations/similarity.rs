@@ -332,6 +332,14 @@ fn entries_are_similar(left: &TitledEntry, right: &TitledEntry) -> bool {
         return false;
     }
 
+    if has_strong_metadata_conflict(
+        left.entry,
+        right.entry,
+        left.normalized_title == right.normalized_title,
+    ) {
+        return false;
+    }
+
     if left.normalized_title == right.normalized_title {
         return true;
     }
@@ -345,6 +353,113 @@ fn entries_are_similar(left: &TitledEntry, right: &TitledEntry) -> bool {
     }
 
     titles_are_similar(&left.normalized_title, &right.normalized_title)
+}
+
+fn has_strong_metadata_conflict(left: &BibEntry, right: &BibEntry, titles_match: bool) -> bool {
+    if field_values_match(left, right, "doi") || arxiv_ids_match(left, right) {
+        return false;
+    }
+
+    let left_author = first_author_token(left);
+    let right_author = first_author_token(right);
+    let authors_conflict = left_author
+        .zip(right_author)
+        .is_some_and(|(left, right)| left != right);
+
+    if titles_match {
+        return authors_conflict
+            && field_values_conflict(left, right, "year")
+            && field_values_conflict(left, right, "doi");
+    }
+
+    if authors_conflict && field_values_conflict(left, right, "year") {
+        return true;
+    }
+
+    if authors_conflict && field_values_conflict(left, right, "doi") {
+        return true;
+    }
+
+    if authors_conflict && arxiv_ids_conflict(left, right) {
+        return true;
+    }
+
+    false
+}
+
+fn field_values_match(left: &BibEntry, right: &BibEntry, field: &str) -> bool {
+    normalized_field_value(left, field)
+        .zip(normalized_field_value(right, field))
+        .is_some_and(|(left, right)| left == right)
+}
+
+fn field_values_conflict(left: &BibEntry, right: &BibEntry, field: &str) -> bool {
+    normalized_field_value(left, field)
+        .zip(normalized_field_value(right, field))
+        .is_some_and(|(left, right)| left != right)
+}
+
+fn arxiv_ids_match(left: &BibEntry, right: &BibEntry) -> bool {
+    arxiv_id(left)
+        .zip(arxiv_id(right))
+        .is_some_and(|(left, right)| left == right)
+}
+
+fn arxiv_ids_conflict(left: &BibEntry, right: &BibEntry) -> bool {
+    arxiv_id(left)
+        .zip(arxiv_id(right))
+        .is_some_and(|(left, right)| left != right)
+}
+
+fn arxiv_id(entry: &BibEntry) -> Option<String> {
+    let prefix = normalized_field_value(entry, "archiveprefix")?;
+    if prefix != "arxiv" {
+        return None;
+    }
+    normalized_field_value(entry, "eprint")
+}
+
+fn first_author_token(entry: &BibEntry) -> Option<String> {
+    let author = entry.fields.get("author")?;
+    let normalized_author = author.split_whitespace().collect::<Vec<_>>().join(" ");
+    let first_author = normalized_author
+        .split(" and ")
+        .next()
+        .unwrap_or(&normalized_author);
+    let family_name = first_author
+        .split_once(',')
+        .map_or(first_author, |(family_name, _)| family_name);
+    let token = family_name
+        .split_whitespace()
+        .last()
+        .unwrap_or(family_name)
+        .chars()
+        .filter(|character| character.is_ascii_alphanumeric())
+        .flat_map(char::to_lowercase)
+        .collect::<String>();
+
+    (!token.is_empty()).then_some(token)
+}
+
+fn normalized_field_value(entry: &BibEntry, field: &str) -> Option<String> {
+    let value = entry.fields.get(field)?;
+    let mut normalized = String::new();
+    for character in value.chars() {
+        if character.is_ascii_alphanumeric() {
+            normalized.push(character.to_ascii_lowercase());
+        }
+    }
+
+    if field == "doi" {
+        normalized = normalized
+            .strip_prefix("httpsdoiorg")
+            .or_else(|| normalized.strip_prefix("httpdoiorg"))
+            .or_else(|| normalized.strip_prefix("doi"))
+            .unwrap_or(&normalized)
+            .to_string();
+    }
+
+    (!normalized.is_empty()).then_some(normalized)
 }
 
 fn is_publication_url_companion_pair(left: &BibEntry, right: &BibEntry) -> bool {
@@ -521,6 +636,62 @@ mod tests {
         assert_eq!(diagnostics.len(), 1);
         assert!(diagnostics[0].message.contains("okumura2019priority"));
         assert!(diagnostics[0].message.contains("okumura2022priority"));
+    }
+
+    #[test]
+    fn ignores_same_title_when_authors_and_years_conflict() {
+        let entries = parse_bib_entries(
+            Path::new("refs.bib"),
+            r"@article{first, author={LeClaire, A. D. and Jones, R.}, title={Diffusion of metals in body-centered cubic metals}, journal={Journal One}, year={1972}, doi={10.1000/first}}
+@article{second, author={Campbell, C. E.}, title={Diffusion of metals in body-centered cubic metals}, journal={Journal Two}, year={1970}, doi={10.1000/second}}",
+        );
+
+        let scoped_entries = entries.iter().collect::<Vec<_>>();
+        assert!(find_similar_titles(&scoped_entries).is_empty());
+    }
+
+    #[test]
+    fn ignores_near_title_when_strong_metadata_conflicts() {
+        let entries = parse_bib_entries(
+            Path::new("refs.bib"),
+            r"@article{burns, author={Burns, Patricia B.}, title={Systematic review of clinical decision rules for diagnosis}, journal={Archives}, year={2012}}
+@article{campbell, author={Campbell, M. K.}, title={Systematic reviews of clinical decision rules in diagnosis}, journal={BMJ}, year={2001}}",
+        );
+
+        let scoped_entries = entries.iter().collect::<Vec<_>>();
+        assert!(find_similar_titles(&scoped_entries).is_empty());
+    }
+
+    #[test]
+    fn keeps_preprint_and_proceedings_version_warnings() {
+        let entries = parse_bib_entries(
+            Path::new("refs.bib"),
+            r"@misc{anomaly_transformer, author={Xu, Jiehui and Wu, Haixu}, title={Anomaly Transformer: Time Series Anomaly Detection with Association Discrepancy}, year={2021}, eprint={2110.02642}, archivePrefix={arXiv}}
+@inproceedings{AnomalyTransformer, author={Xu, Jiehui and Wu, Haixu}, title={Anomaly Transformer: Time Series Anomaly Detection with Association Discrepancy}, booktitle={ICLR}, year={2022}}",
+        );
+
+        let scoped_entries = entries.iter().collect::<Vec<_>>();
+        let diagnostics = find_similar_titles(&scoped_entries);
+
+        assert_eq!(diagnostics.len(), 1);
+        assert!(diagnostics[0].message.contains("anomaly_transformer"));
+        assert!(diagnostics[0].message.contains("AnomalyTransformer"));
+    }
+
+    #[test]
+    fn keeps_same_work_when_first_author_formats_differ() {
+        let entries = parse_bib_entries(
+            Path::new("refs.bib"),
+            r"@inproceedings{proceedings, author={Bavaresco, Anna and Bernardi, Raffaella}, title={LLMs instead of Human Judges? A Large Scale Empirical Study across 20 NLP Evaluation Tasks}, booktitle={ACL}, year={2025}, doi={10.18653/v1/2025.acl-short.20}}
+@article{preprint, author={Anna Bavaresco and Raffaella Bernardi}, title={LLMs instead of Human Judges? A Large Scale Empirical Study across 20 NLP Evaluation Tasks}, journal={CoRR}, year={2024}, doi={10.48550/arXiv.2406.18403}, eprint={2406.18403}, eprinttype={arXiv}}",
+        );
+
+        let scoped_entries = entries.iter().collect::<Vec<_>>();
+        let diagnostics = find_similar_titles(&scoped_entries);
+
+        assert_eq!(diagnostics.len(), 1);
+        assert!(diagnostics[0].message.contains("proceedings"));
+        assert!(diagnostics[0].message.contains("preprint"));
     }
 
     #[test]

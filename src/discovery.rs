@@ -253,33 +253,51 @@ fn find_input_paths(content: &str) -> Vec<String> {
 }
 
 fn resolve_tex_input(project_root: &Path, current_file: &Path, input: &str) -> PathBuf {
-    if !is_tex_like_input(input) {
-        return PathBuf::new();
+    let raw = Path::new(input.trim());
+    let bases = [
+        current_file
+            .parent()
+            .unwrap_or_else(|| Path::new(""))
+            .to_path_buf(),
+        project_root.to_path_buf(),
+    ];
+
+    for base in bases {
+        for candidate in tex_input_candidates(&base, raw) {
+            if candidate.is_file() {
+                return candidate;
+            }
+        }
     }
 
-    let mut current_relative = current_file
-        .parent()
-        .unwrap_or_else(|| Path::new(""))
-        .join(input.trim());
-    if current_relative.extension().is_none() {
-        current_relative.set_extension("tex");
-    }
-    if current_relative.is_file() {
-        return current_relative;
-    }
-
-    let mut root_relative = project_root.join(input.trim());
-    if root_relative.extension().is_none() {
-        root_relative.set_extension("tex");
-    }
-    root_relative
+    PathBuf::new()
 }
 
-fn is_tex_like_input(input: &str) -> bool {
-    let path = Path::new(input.trim());
-    path.extension()
+fn tex_input_candidates(base: &Path, raw: &Path) -> Vec<PathBuf> {
+    let mut candidates = Vec::new();
+    let raw_path = if raw.is_absolute() {
+        raw.to_path_buf()
+    } else {
+        base.join(raw)
+    };
+
+    if raw
+        .extension()
         .and_then(|extension| extension.to_str())
         .is_none_or(|extension| extension.eq_ignore_ascii_case("tex"))
+    {
+        candidates.push(raw_path.clone());
+    }
+
+    if !raw_path
+        .extension()
+        .and_then(|extension| extension.to_str())
+        .is_some_and(|extension| extension.eq_ignore_ascii_case("tex"))
+    {
+        candidates.push(PathBuf::from(format!("{}.tex", raw_path.display())));
+    }
+
+    candidates
 }
 
 fn read_command_name(content: &str, slash_index: usize) -> Option<(&str, usize)> {

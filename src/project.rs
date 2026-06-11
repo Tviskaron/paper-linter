@@ -285,31 +285,11 @@ fn common_ancestor(left: PathBuf, right: PathBuf) -> PathBuf {
 }
 
 fn resolve_include_path(root: &Path, current_file: &Path, include: &Include) -> Option<PathBuf> {
-    if !is_tex_like_include(&include.raw_path) {
-        return None;
-    }
-
     let base = current_file.parent()?;
     let raw = Path::new(&include.raw_path);
-    let candidate = if raw.is_absolute() {
-        raw.to_path_buf()
-    } else {
-        base.join(raw)
-    };
-
-    let mut candidates = if candidate.extension().is_some() {
-        vec![candidate]
-    } else {
-        vec![candidate.clone(), candidate.with_extension("tex")]
-    };
+    let mut candidates = tex_include_candidates(base, raw);
     if !raw.is_absolute() {
-        let root_candidate = root.join(raw);
-        if root_candidate.extension().is_some() {
-            candidates.push(root_candidate);
-        } else {
-            candidates.push(root_candidate.clone());
-            candidates.push(root_candidate.with_extension("tex"));
-        }
+        candidates.extend(tex_include_candidates(root, raw));
     }
 
     candidates.into_iter().find_map(|candidate| {
@@ -318,11 +298,31 @@ fn resolve_include_path(root: &Path, current_file: &Path, include: &Include) -> 
     })
 }
 
-fn is_tex_like_include(raw_path: &str) -> bool {
-    Path::new(raw_path.trim())
+fn tex_include_candidates(base: &Path, raw: &Path) -> Vec<PathBuf> {
+    let mut candidates = Vec::new();
+    let raw_path = if raw.is_absolute() {
+        raw.to_path_buf()
+    } else {
+        base.join(raw)
+    };
+
+    if raw
         .extension()
         .and_then(|extension| extension.to_str())
         .is_none_or(|extension| extension.eq_ignore_ascii_case("tex"))
+    {
+        candidates.push(raw_path.clone());
+    }
+
+    if !raw_path
+        .extension()
+        .and_then(|extension| extension.to_str())
+        .is_some_and(|extension| extension.eq_ignore_ascii_case("tex"))
+    {
+        candidates.push(PathBuf::from(format!("{}.tex", raw_path.display())));
+    }
+
+    candidates
 }
 
 fn resolve_graphic_path(

@@ -279,6 +279,7 @@ pub fn check_project(
     }
 
     diagnostics.extend(find_invalid_bibliography_metadata(&scoped_entries));
+    diagnostics.extend(find_bibliography_style_policy(&scoped_entries));
     diagnostics.extend(find_duplicate_keys(&scoped_entries));
     diagnostics.extend(find_similar_titles(&scoped_entries));
 
@@ -534,6 +535,39 @@ fn find_invalid_bibliography_metadata(entries: &[&BibEntry]) -> Vec<Diagnostic> 
     }
 
     diagnostics
+}
+
+fn find_bibliography_style_policy(entries: &[&BibEntry]) -> Vec<Diagnostic> {
+    let mut diagnostics = Vec::new();
+
+    for &entry in entries {
+        for field in entry.fields.keys() {
+            if !is_forbidden_bibliography_field(field) {
+                continue;
+            }
+
+            diagnostics.push(
+                Diagnostic::new(
+                    "BIB002",
+                    Severity::Warning,
+                    format!(
+                        "bibliography entry '{}' contains private field '{}'",
+                        entry.key, field
+                    ),
+                    &entry.file,
+                    entry.line,
+                    entry.column,
+                )
+                .with_hint("remove local-only bibliography fields before submission"),
+            );
+        }
+    }
+
+    diagnostics
+}
+
+fn is_forbidden_bibliography_field(field: &str) -> bool {
+    matches!(field, "file")
 }
 
 fn normalize_braced_value(value: &str) -> String {

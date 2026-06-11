@@ -8,7 +8,7 @@ pub fn enabled_by_default(code: &str) -> bool {
 pub fn strict_only(code: &str) -> bool {
     matches!(
         code,
-        "CIT009" | "CIT010" | "FMT001" | "FMT002" | "TXT005" | "WS001" | "PRJ005"
+        "BIB002" | "CIT009" | "CIT010" | "FMT001" | "FMT002" | "TXT005" | "WS001" | "PRJ005"
     )
 }
 
@@ -46,6 +46,15 @@ mod tests {
 
     #[test]
     fn strict_only_rules_need_strict_or_select() {
+        assert!(!code_is_enabled("BIB002", &[], &[], false));
+        assert!(code_is_enabled("BIB002", &[], &[], true));
+        assert!(code_is_enabled(
+            "BIB002",
+            &[String::from("BIB002")],
+            &[],
+            false
+        ));
+
         assert!(!code_is_enabled("CIT009", &[], &[], false));
         assert!(code_is_enabled("CIT009", &[], &[], true));
         assert!(code_is_enabled(

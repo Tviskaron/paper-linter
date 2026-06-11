@@ -20,6 +20,10 @@ impl Rule for EnvironmentMismatch {
         let mut stack: Vec<EnvironmentEvent> = Vec::new();
 
         for event in environment_events(content) {
+            if is_ignored_environment(&event.name) {
+                continue;
+            }
+
             match event.kind {
                 EnvironmentEventKind::Begin => stack.push(event),
                 EnvironmentEventKind::End => {
@@ -43,6 +47,10 @@ impl Rule for EnvironmentMismatch {
         );
         diagnostics
     }
+}
+
+fn is_ignored_environment(name: &str) -> bool {
+    matches!(name, "document" | "list")
 }
 
 fn diagnostic(rule: &EnvironmentMismatch, path: &Path, event: &EnvironmentEvent) -> Diagnostic {
@@ -89,6 +97,24 @@ mod tests {
     fn ignores_balanced_environment() {
         let diagnostics = EnvironmentMismatch
             .check_file(Path::new("paper.tex"), "\\begin{figure}\n\\end{figure}\n");
+
+        assert!(diagnostics.is_empty());
+    }
+
+    #[test]
+    fn ignores_document_environment_boundaries() {
+        let diagnostics =
+            EnvironmentMismatch.check_file(Path::new("fragment.tex"), "\\end{document}\n");
+
+        assert!(diagnostics.is_empty());
+    }
+
+    #[test]
+    fn ignores_internal_list_environment() {
+        let diagnostics = EnvironmentMismatch.check_file(
+            Path::new("paper.tex"),
+            "\\begin{abstract}\n\\end{list}\n\\end{abstract}\n",
+        );
 
         assert!(diagnostics.is_empty());
     }

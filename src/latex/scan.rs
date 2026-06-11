@@ -138,6 +138,7 @@ struct ActiveEnv {
 pub fn scan_latex(file: impl Into<PathBuf>, content: &str) -> ScanResult {
     let file = file.into();
     let bytes = content.as_bytes();
+    let line_starts = line_starts(content);
     let mut result = ScanResult::default();
     let mut stack: Vec<ActiveEnv> = Vec::new();
     let mut index = 0;
@@ -158,7 +159,7 @@ pub fn scan_latex(file: impl Into<PathBuf>, content: &str) -> ScanResult {
             index += 1;
             continue;
         };
-        let (line, column) = line_column(content, command_start);
+        let (line, column) = line_column(&line_starts, command_start);
         let location = SourceLocation::new(file.clone(), line, column);
         let in_ignored = stack.iter().any(|env| env.ignored);
 
@@ -261,7 +262,7 @@ pub fn scan_latex(file: impl Into<PathBuf>, content: &str) -> ScanResult {
                 }
             }
             "input" | "include" => {
-                if let Some((raw_path, end)) = parse_required_arg(content, after_command) {
+                if let Some((raw_path, end)) = parse_include_arg(content, after_command) {
                     result.includes.push(Include { raw_path, location });
                     index = end;
                 } else {
@@ -456,6 +457,26 @@ fn parse_graphics_paths(raw_paths: &str) -> Vec<String> {
     paths
 }
 
+fn parse_include_arg(content: &str, start: usize) -> Option<(String, usize)> {
+    if let Some((raw_path, end)) = parse_required_arg(content, start) {
+        return Some((raw_path, end));
+    }
+
+    let bytes = content.as_bytes();
+    let path_start = skip_ws(bytes, start);
+    let mut path_end = path_start;
+
+    while path_end < bytes.len() {
+        let byte = bytes[path_end];
+        if byte.is_ascii_whitespace() || matches!(byte, b'%' | b'{' | b'}' | b'\\') {
+            break;
+        }
+        path_end += 1;
+    }
+
+    (path_end > path_start).then(|| (content[path_start..path_end].trim().to_string(), path_end))
+}
+
 fn skip_optional_args(content: &str, start: usize) -> usize {
     parse_optional_arg_values(content, start).1
 }
@@ -539,23 +560,24 @@ fn is_escaped(bytes: &[u8], index: usize) -> bool {
     count % 2 == 1
 }
 
-fn line_column(content: &str, target: usize) -> (usize, usize) {
-    let mut line = 1usize;
-    let mut column = 1usize;
+fn line_starts(content: &str) -> Vec<usize> {
+    let mut starts = vec![0];
+    starts.extend(
+        content
+            .bytes()
+            .enumerate()
+            .filter_map(|(index, byte)| (byte == b'\n').then_some(index + 1)),
+    );
+    starts
+}
 
-    for (index, character) in content.char_indices() {
-        if index >= target {
-            break;
-        }
-        if character == '\n' {
-            line += 1;
-            column = 1;
-        } else {
-            column += 1;
-        }
-    }
-
-    (line, column)
+fn line_column(line_starts: &[usize], target: usize) -> (usize, usize) {
+    let line_index = match line_starts.binary_search(&target) {
+        Ok(index) => index,
+        Err(index) => index.saturating_sub(1),
+    };
+    let line_start = line_starts[line_index];
+    (line_index + 1, target - line_start + 1)
 }
 
 fn float_kind(env_name: &str) -> Option<FloatKind> {
@@ -635,7 +657,7 @@ mod tests {
     fn records_inputs_and_includes() {
         let scan = scan_latex(
             Path::new("paper.tex"),
-            "\\input{sections/method}\n\\include{sections/results}\n",
+            "\\input{sections/method}\n\\include sections/results\n",
         );
 
         let paths: Vec<_> = scan

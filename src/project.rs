@@ -198,6 +198,10 @@ fn common_ancestor(left: PathBuf, right: PathBuf) -> PathBuf {
 }
 
 fn resolve_include_path(root: &Path, current_file: &Path, include: &Include) -> Option<PathBuf> {
+    if !is_tex_like_include(&include.raw_path) {
+        return None;
+    }
+
     let base = current_file.parent()?;
     let raw = Path::new(&include.raw_path);
     let candidate = if raw.is_absolute() {
@@ -206,16 +210,32 @@ fn resolve_include_path(root: &Path, current_file: &Path, include: &Include) -> 
         base.join(raw)
     };
 
-    let candidates = if candidate.extension().is_some() {
+    let mut candidates = if candidate.extension().is_some() {
         vec![candidate]
     } else {
         vec![candidate.clone(), candidate.with_extension("tex")]
     };
+    if !raw.is_absolute() {
+        let root_candidate = root.join(raw);
+        if root_candidate.extension().is_some() {
+            candidates.push(root_candidate);
+        } else {
+            candidates.push(root_candidate.clone());
+            candidates.push(root_candidate.with_extension("tex"));
+        }
+    }
 
     candidates.into_iter().find_map(|candidate| {
         let canonical = candidate.canonicalize().ok()?;
-        canonical.starts_with(root).then_some(canonical)
+        (canonical.is_file() && canonical.starts_with(root)).then_some(canonical)
     })
+}
+
+fn is_tex_like_include(raw_path: &str) -> bool {
+    Path::new(raw_path.trim())
+        .extension()
+        .and_then(|extension| extension.to_str())
+        .is_none_or(|extension| extension.eq_ignore_ascii_case("tex"))
 }
 
 fn resolve_graphic_path(
@@ -227,6 +247,9 @@ fn resolve_graphic_path(
     graphic_candidate_paths(root, current_file, raw_path, graphics_paths)?
         .into_iter()
         .find_map(|candidate| {
+            if find_case_mismatch(root, &candidate).is_some() {
+                return None;
+            }
             let canonical = candidate.canonicalize().ok()?;
             canonical.starts_with(root).then_some(canonical)
         })
@@ -271,10 +294,6 @@ fn graphic_candidate_paths(
 }
 
 fn find_case_mismatch(root: &Path, candidate: &Path) -> Option<PathBuf> {
-    if candidate.exists() {
-        return None;
-    }
-
     let parent = candidate.parent()?;
     let target_name = candidate.file_name()?.to_str()?;
 
@@ -283,7 +302,11 @@ fn find_case_mismatch(root: &Path, candidate: &Path) -> Option<PathBuf> {
         let file_name = entry.file_name();
         let file_name = file_name.to_str()?;
 
-        if file_name != target_name && file_name.eq_ignore_ascii_case(target_name) {
+        if file_name == target_name {
+            return None;
+        }
+
+        if file_name.eq_ignore_ascii_case(target_name) {
             let canonical = entry.path().canonicalize().ok()?;
             if canonical.starts_with(root) {
                 return Some(canonical);
@@ -378,6 +401,66 @@ mod tests {
     }
 
     #[test]
+    fn ignores_explicit_non_tex_inputs() {
+        let dir = temp_project("pgf-input");
+        let main = dir.join("paper.tex");
+        let plot = dir.join("plot.pgf");
+        write(&main, "\\input{plot.pgf}\n");
+        write(&plot, "\\label{fig:plot}\n");
+
+        let index = ProjectIndex::build(std::slice::from_ref(&main), std::slice::from_ref(&main))
+            .expect("project should index");
+
+        assert_eq!(index.files.len(), 1);
+        assert!(index.labels.is_empty());
+    }
+
+    #[test]
+    fn ignores_inputs_that_resolve_to_directories() {
+        let dir = temp_project("directory-input");
+        let main = dir.join("paper.tex");
+        fs::create_dir_all(dir.join("sections")).expect("failed to create input directory");
+        write(&main, "\\input sections\n");
+
+        let index = ProjectIndex::build(std::slice::from_ref(&main), std::slice::from_ref(&main))
+            .expect("project should index");
+
+        assert_eq!(index.files.len(), 1);
+    }
+
+    #[test]
+    fn follows_bare_input_paths() {
+        let dir = temp_project("bare-input");
+        let main = dir.join("paper.tex");
+        let method = dir.join("sections/method.tex");
+        write(&main, "\\input sections/method\n");
+        write(&method, "\\label{sec:method}\n");
+
+        let index = ProjectIndex::build(std::slice::from_ref(&main), std::slice::from_ref(&main))
+            .expect("project should index");
+
+        assert_eq!(index.files.len(), 2);
+        assert!(index.labels.iter().any(|label| label.key == "sec:method"));
+    }
+
+    #[test]
+    fn follows_root_relative_inputs_from_nested_files() {
+        let dir = temp_project("root-relative-input");
+        let main = dir.join("paper.tex");
+        let supp = dir.join("src/supp/supp.tex");
+        let method = dir.join("src/supp/method.tex");
+        write(&main, "\\input src/supp/supp\n");
+        write(&supp, "\\input src/supp/method\n");
+        write(&method, "\\label{sec:method}\n");
+
+        let index = ProjectIndex::build(std::slice::from_ref(&main), std::slice::from_ref(&main))
+            .expect("project should index");
+
+        assert_eq!(index.files.len(), 3);
+        assert!(index.labels.iter().any(|label| label.key == "sec:method"));
+    }
+
+    #[test]
     fn resolves_extensionless_graphic() {
         let dir = temp_project("graphics");
         let main = dir.join("paper.tex");
@@ -417,7 +500,10 @@ mod tests {
             .expect("project should index");
 
         assert_eq!(index.graphics.len(), 1);
-        assert_eq!(index.resolve_graphic(&index.graphics[0]), Some(asset));
+        assert_eq!(
+            index.resolve_graphic(&index.graphics[0]),
+            asset.canonicalize().ok()
+        );
     }
 
     #[test]
@@ -436,7 +522,10 @@ mod tests {
 
         assert_eq!(index.graphics_paths.len(), 1);
         assert_eq!(index.graphics.len(), 1);
-        assert_eq!(index.resolve_graphic(&index.graphics[0]), Some(asset));
+        assert_eq!(
+            index.resolve_graphic(&index.graphics[0]),
+            asset.canonicalize().ok()
+        );
     }
 
     #[test]
@@ -457,7 +546,7 @@ mod tests {
         assert_eq!(index.resolve_graphic(&index.graphics[0]), None);
         assert_eq!(
             index.find_graphic_case_mismatch(&index.graphics[0]),
-            Some(asset)
+            asset.canonicalize().ok()
         );
     }
 

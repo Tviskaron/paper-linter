@@ -1,11 +1,206 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::Path;
 
 use super::syntax::{balanced_group_end, skip_ascii_whitespace};
 use super::BibEntry;
 
 pub(super) fn parse_bib_entries(path: &Path, content: &str) -> Vec<BibEntry> {
-    let line_starts = line_starts(content);
+    parse_bib_entries_matching(path, content, None)
+}
+
+pub(super) fn parse_bib_entries_for_keys(
+    path: &Path,
+    content: &str,
+    keys: &HashSet<String>,
+) -> Vec<BibEntry> {
+    if keys.len() <= 4 && keys.iter().all(|key| key.len() >= 3) {
+        return parse_bib_entries_by_key_search(path, content, keys);
+    }
+
+    parse_bib_entries_by_header_scan(path, content, keys)
+}
+
+fn parse_bib_entries_by_key_search(
+    path: &Path,
+    content: &str,
+    keys: &HashSet<String>,
+) -> Vec<BibEntry> {
+    let mut line_starts = None;
+    let mut seen_starts = HashSet::new();
+    let mut entries = Vec::new();
+
+    for key in keys {
+        let mut offset = 0;
+        while let Some(relative) = content[offset..].find(key) {
+            let key_index = offset + relative;
+            offset = key_index + key.len();
+
+            let Some(at_index) = content[..key_index].rfind('@') else {
+                continue;
+            };
+            if !seen_starts.insert(at_index) {
+                continue;
+            }
+
+            let Some((entry_type, after_type)) = read_bib_type(content, at_index) else {
+                continue;
+            };
+            let after_type = skip_ascii_whitespace(content, after_type);
+            let Some(open) = content[after_type..].chars().next() else {
+                continue;
+            };
+            if open != '{' && open != '(' {
+                continue;
+            }
+
+            let entry_type_lower = entry_type.to_ascii_lowercase();
+            if matches!(entry_type_lower.as_str(), "comment" | "string" | "preamble") {
+                continue;
+            }
+
+            let body_start = after_type + 1;
+            let Some((entry_key, entry_key_start, comma)) = read_entry_key(content, body_start)
+            else {
+                continue;
+            };
+            if entry_key != key || entry_key_start != key_index {
+                continue;
+            }
+
+            let close = if open == '{' { '}' } else { ')' };
+            let Some(end) = balanced_group_end(content, after_type, open, close) else {
+                continue;
+            };
+            if comma >= end {
+                continue;
+            }
+
+            let line_starts = line_starts.get_or_insert_with(|| line_starts_for(content));
+            if let Some(entry) = parse_bib_entry(
+                path,
+                content,
+                line_starts,
+                entry_type_lower,
+                body_start,
+                end,
+            ) {
+                entries.push(entry);
+            }
+        }
+    }
+
+    entries.sort_by(|left, right| {
+        left.file
+            .cmp(&right.file)
+            .then(left.line.cmp(&right.line))
+            .then(left.column.cmp(&right.column))
+            .then(left.key.cmp(&right.key))
+    });
+    entries
+}
+
+fn parse_bib_entries_by_header_scan(
+    path: &Path,
+    content: &str,
+    keys: &HashSet<String>,
+) -> Vec<BibEntry> {
+    let mut line_starts = None;
+    let mut entries = Vec::new();
+    let mut line_start = 0;
+    let bytes = content.as_bytes();
+    let mut active_entry: Option<(u8, u8, usize)> = None;
+
+    while line_start < content.len() {
+        let line_end = content[line_start..]
+            .find('\n')
+            .map(|relative| line_start + relative)
+            .unwrap_or(content.len());
+        let scan_end = line_end.saturating_add(1).min(content.len());
+
+        if let Some((open, close, depth)) = active_entry {
+            let depth = delimiter_depth(bytes, line_start, scan_end, open, close, depth);
+            active_entry = (depth > 0).then_some((open, close, depth));
+            line_start = line_end.saturating_add(1);
+            continue;
+        }
+
+        let mut at_index = line_start;
+        while at_index < line_end && bytes[at_index].is_ascii_whitespace() {
+            at_index += 1;
+        }
+
+        if bytes.get(at_index) == Some(&b'@') {
+            if let Some((entry_type, after_type)) = read_bib_type(content, at_index) {
+                let after_type = skip_ascii_whitespace(content, after_type);
+                if let Some(open) = content[after_type..].chars().next() {
+                    if open == '{' || open == '(' {
+                        let entry_type_lower = entry_type.to_ascii_lowercase();
+                        let open_byte = open as u8;
+                        let close = if open == '{' { '}' } else { ')' };
+                        let close_byte = close as u8;
+
+                        if !matches!(entry_type_lower.as_str(), "comment" | "string" | "preamble") {
+                            let body_start = after_type + 1;
+                            if let Some((key, _, _)) = read_entry_key(content, body_start) {
+                                if keys.contains(key) {
+                                    if let Some(end) =
+                                        balanced_group_end(content, after_type, open, close)
+                                    {
+                                        let line_starts = line_starts
+                                            .get_or_insert_with(|| line_starts_for(content));
+                                        if let Some(entry) = parse_bib_entry(
+                                            path,
+                                            content,
+                                            line_starts,
+                                            entry_type_lower,
+                                            body_start,
+                                            end,
+                                        ) {
+                                            entries.push(entry);
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
+                        let depth =
+                            delimiter_depth(bytes, after_type, scan_end, open_byte, close_byte, 0);
+                        active_entry = (depth > 0).then_some((open_byte, close_byte, depth));
+                    }
+                }
+            }
+        }
+
+        line_start = line_end.saturating_add(1);
+    }
+
+    entries
+}
+
+fn delimiter_depth(
+    bytes: &[u8],
+    start: usize,
+    end: usize,
+    open: u8,
+    close: u8,
+    mut depth: usize,
+) -> usize {
+    for byte in &bytes[start..end] {
+        if *byte == open {
+            depth += 1;
+        } else if *byte == close && depth > 0 {
+            depth -= 1;
+        }
+    }
+    depth
+}
+
+fn parse_bib_entries_matching(
+    path: &Path,
+    content: &str,
+    keys: Option<&HashSet<String>>,
+) -> Vec<BibEntry> {
+    let mut line_starts = None;
     let mut entries = Vec::new();
     let mut offset = 0;
 
@@ -25,29 +220,65 @@ pub(super) fn parse_bib_entries(path: &Path, content: &str) -> Vec<BibEntry> {
             continue;
         }
 
+        let entry_type_lower = entry_type.to_ascii_lowercase();
         let close = if open == '{' { '}' } else { ')' };
+        if matches!(entry_type_lower.as_str(), "comment" | "string" | "preamble") {
+            let Some(end) = balanced_group_end(content, after_type, open, close) else {
+                break;
+            };
+            offset = end + 1;
+            continue;
+        }
+
+        let body_start = after_type + 1;
+        if let Some(keys) = keys {
+            let Some((key, _, comma)) = read_entry_key(content, body_start) else {
+                offset = body_start;
+                continue;
+            };
+            if !keys.contains(key) {
+                offset = comma + 1;
+                continue;
+            }
+        }
+
         let Some(end) = balanced_group_end(content, after_type, open, close) else {
             break;
         };
 
-        let entry_type_lower = entry_type.to_ascii_lowercase();
-        if !matches!(entry_type_lower.as_str(), "comment" | "string" | "preamble") {
-            if let Some(entry) = parse_bib_entry(
-                path,
-                content,
-                &line_starts,
-                entry_type_lower,
-                after_type + 1,
-                end,
-            ) {
-                entries.push(entry);
-            }
+        let line_starts = line_starts.get_or_insert_with(|| line_starts_for(content));
+        if let Some(entry) = parse_bib_entry(
+            path,
+            content,
+            line_starts,
+            entry_type_lower,
+            body_start,
+            end,
+        ) {
+            entries.push(entry);
         }
 
         offset = end + 1;
     }
 
     entries
+}
+
+fn read_entry_key(content: &str, body_start: usize) -> Option<(&str, usize, usize)> {
+    let comma = content[body_start..]
+        .find(',')
+        .map(|relative| body_start + relative)?;
+    let key = content[body_start..comma].trim();
+    if key.is_empty() {
+        return None;
+    }
+
+    let key_start = content[body_start..comma]
+        .find(key)
+        .map(|relative| body_start + relative)
+        .unwrap_or(body_start);
+
+    Some((key, key_start, comma))
 }
 
 fn read_bib_type(content: &str, at_index: usize) -> Option<(&str, usize)> {
@@ -77,24 +308,7 @@ fn parse_bib_entry(
     body_start: usize,
     body_end: usize,
 ) -> Option<BibEntry> {
-    let mut comma = None;
-    for (index, character) in content[body_start..body_end].char_indices() {
-        if character == ',' {
-            comma = Some(body_start + index);
-            break;
-        }
-    }
-
-    let comma = comma?;
-    let key = content[body_start..comma].trim();
-    if key.is_empty() {
-        return None;
-    }
-
-    let key_start = content[body_start..comma]
-        .find(key)
-        .map(|relative| body_start + relative)
-        .unwrap_or(body_start);
+    let (key, key_start, comma) = read_entry_key(content, body_start)?;
     let (line, column) = line_column(line_starts, key_start);
     let fields = parse_fields(&content[comma + 1..body_end]);
 
@@ -206,7 +420,7 @@ fn quoted_string_end(body: &str, start: usize) -> Option<usize> {
     None
 }
 
-fn line_starts(content: &str) -> Vec<usize> {
+fn line_starts_for(content: &str) -> Vec<usize> {
     let mut starts = vec![0];
     for (index, character) in content.char_indices() {
         if character == '\n' {
@@ -224,9 +438,10 @@ fn line_column(line_starts: &[usize], byte_index: usize) -> (usize, usize) {
 
 #[cfg(test)]
 mod tests {
+    use std::collections::HashSet;
     use std::path::Path;
 
-    use super::parse_bib_entries;
+    use super::{parse_bib_entries, parse_bib_entries_for_keys};
     use crate::rules::citations::missing_required_fields;
 
     #[test]
@@ -255,5 +470,61 @@ mod tests {
             missing_required_fields(&entries[1]),
             vec!["author/editor", "year"]
         );
+    }
+
+    #[test]
+    fn parses_only_requested_bib_entries() {
+        let entries = parse_bib_entries_for_keys(
+            Path::new("refs.bib"),
+            r#"@article{alpha,
+  title = {A {Nested} Title},
+  author = "Ada Lovelace",
+  journal = {Journal},
+  year = 1843
+}
+@misc{unused, title={Unused Long Enough Title}, year={2024}, eprint={1}}"#,
+            &HashSet::from(["alpha".to_string()]),
+        );
+
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].key, "alpha");
+        assert!(entries[0].fields.contains_key("author"));
+    }
+
+    #[test]
+    fn parses_many_requested_keys_with_header_scan() {
+        let keys = HashSet::from([
+            "alpha".to_string(),
+            "beta".to_string(),
+            "gamma".to_string(),
+            "delta".to_string(),
+            "epsilon".to_string(),
+            "x".to_string(),
+        ]);
+
+        let entries = parse_bib_entries_for_keys(
+            Path::new("refs.bib"),
+            r#"@misc{unused,
+  title = {Unused},
+  note = {
+@article{alpha,
+  title = {Not an entry}
+}
+  }
+}
+  @article{alpha,
+    title = {A Real Title},
+    author = {Ada Lovelace},
+    journal = {Journal},
+    year = {1843}
+  }
+@misc{zeta, title={Other}}"#,
+            &keys,
+        );
+
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].key, "alpha");
+        assert_eq!(entries[0].line, 9);
+        assert_eq!(entries[0].fields["title"], "A Real Title");
     }
 }

@@ -23,6 +23,7 @@ impl SourceLocation {
 pub enum FloatKind {
     Figure,
     Table,
+    Algorithm,
 }
 
 impl FloatKind {
@@ -30,6 +31,7 @@ impl FloatKind {
         match self {
             FloatKind::Figure => "figure",
             FloatKind::Table => "table",
+            FloatKind::Algorithm => "algorithm",
         }
     }
 }
@@ -38,6 +40,7 @@ impl FloatKind {
 pub enum LabelKind {
     Figure,
     Table,
+    Algorithm,
     Other,
 }
 
@@ -46,6 +49,7 @@ impl From<Option<FloatKind>> for LabelKind {
         match kind {
             Some(FloatKind::Figure) => LabelKind::Figure,
             Some(FloatKind::Table) => LabelKind::Table,
+            Some(FloatKind::Algorithm) => LabelKind::Algorithm,
             None => LabelKind::Other,
         }
     }
@@ -816,6 +820,7 @@ fn float_kind(env_name: &str) -> Option<FloatKind> {
             Some(FloatKind::Figure)
         }
         "table" | "table*" | "sidewaystable" | "subtable" => Some(FloatKind::Table),
+        "algorithm" | "algorithm*" => Some(FloatKind::Algorithm),
         _ => None,
     }
 }
@@ -856,6 +861,20 @@ mod tests {
         assert_eq!(scan.floats[0].captions[0].text, "Long");
         assert_eq!(scan.floats[0].labels[0].key, "fig:model");
         assert_eq!(scan.labels[0].kind, LabelKind::Figure);
+    }
+
+    #[test]
+    fn collects_algorithm_contents() {
+        let scan = scan_latex(
+            Path::new("paper.tex"),
+            "\\begin{algorithm}\n\\caption{Planner}\n\\label{alg:planner}\n\\end{algorithm}\n",
+        );
+
+        assert_eq!(scan.floats.len(), 1);
+        assert_eq!(scan.floats[0].kind, FloatKind::Algorithm);
+        assert_eq!(scan.floats[0].captions.len(), 1);
+        assert_eq!(scan.floats[0].labels[0].key, "alg:planner");
+        assert_eq!(scan.labels[0].kind, LabelKind::Algorithm);
     }
 
     #[test]

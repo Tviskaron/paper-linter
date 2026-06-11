@@ -60,6 +60,7 @@ implemented:
 - `CIT009`-`CIT011`: opt-in or `--strict` citation style checks, including
   collapsible citations, mixed citation command families, and canonical
   bibliography keys such as `skrynnik2024learn`.
+- `ALG001`: algorithm labels are referenced in text.
 - `FMT001`: missing final newline (opt-in or `--strict`).
 - `FMT002`: repeated blank lines (opt-in or `--strict`).
 - `ENV001`: environment begin/end mismatch.
@@ -68,6 +69,7 @@ implemented:
 - `TEX001`: missing non-breaking space before references or citations.
 - `TXT001`: placeholder text.
 - `TXT002`: repeated word.
+- `LBL001`: unused non-float label (opt-in or `--strict`).
 - `WS001`: trailing whitespace (opt-in or `--strict`).
 
 The remaining checks listed above describe the intended MVP and v1.0 roadmap.

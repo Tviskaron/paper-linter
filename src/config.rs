@@ -215,6 +215,21 @@ mod tests {
     }
 
     #[test]
+    fn loads_arxiv_preset() {
+        let config = super::LinterConfig::load_preset("arxiv").expect("preset");
+        assert!(config.enable.iter().any(|code| code == "CIT012"));
+        assert!(config.enable.iter().any(|code| code == "PKG001"));
+    }
+
+    #[test]
+    fn loads_neurips_and_acl_presets() {
+        let neurips = super::LinterConfig::load_preset("neurips").expect("neurips");
+        let acl = super::LinterConfig::load_preset("acl").expect("acl");
+        assert!(neurips.enable.iter().any(|code| code == "PKG002"));
+        assert!(acl.enable.iter().any(|code| code == "TEX002"));
+    }
+
+    #[test]
     fn parses_bibliography_forbidden_fields() {
         let config =
             parse_toml("[bibliography]\nforbidden_fields = [\"abstract\", \"Keywords\"]\n")

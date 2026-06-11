@@ -1,0 +1,6 @@
+[rules]
+enable = ["CIT012", "PKG001"]
+disable = ["CIT002"]
+
+[severity]
+cit012 = "warning"

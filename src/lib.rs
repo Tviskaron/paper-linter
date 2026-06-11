@@ -1,3 +1,4 @@
+pub mod artifacts;
 pub mod baseline;
 pub mod checker;
 pub mod cli;

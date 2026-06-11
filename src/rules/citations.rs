@@ -217,7 +217,23 @@ pub fn check_project(
                             declaration.column,
                         ));
                     } else {
-                        bbl_keys.extend(fallback_keys);
+                        bbl_keys.extend(fallback_keys.clone());
+                        diagnostics.push(
+                            Diagnostic::new(
+                                "CIT012",
+                                Severity::Warning,
+                                format!(
+                                    "bibliography source '{}' is missing; citations are resolved from prebuilt .bbl only",
+                                    bib_path.display()
+                                ),
+                                &declaration.file,
+                                declaration.line,
+                                declaration.column,
+                            )
+                            .with_hint(
+                                "restore the .bib file if you need to edit bibliography entries",
+                            ),
+                        );
                     }
                 }
             }

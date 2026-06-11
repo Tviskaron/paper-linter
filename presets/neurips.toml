@@ -1,0 +1,8 @@
+[rules]
+enable = ["PKG001", "PKG002", "SEC006", "CAP002", "CIT011", "SYN001"]
+disable = ["CIT002"]
+
+[severity]
+pkg002 = "warning"
+sec006 = "warning"
+cap002 = "warning"

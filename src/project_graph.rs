@@ -14,7 +14,7 @@ const MAIN_LIKE_NAMES: [&str; 5] = [
 ];
 
 type IncludeEdges = Vec<(PathBuf, PathBuf)>;
-type IncludedBy = BTreeMap<PathBuf, BTreeSet<PathBuf>>;
+type IncludeMap = BTreeMap<PathBuf, BTreeSet<PathBuf>>;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -261,10 +261,7 @@ fn choose_root_candidate(candidates: &[PathBuf], paper_dir: &Path) -> Option<Pat
 fn build_include_graph_for_candidates(
     paper_dir: &Path,
     candidates: &[PathBuf],
-) -> (
-    BTreeMap<PathBuf, BTreeSet<PathBuf>>,
-    BTreeMap<PathBuf, BTreeSet<PathBuf>>,
-) {
+) -> (IncludeMap, IncludeMap) {
     let all_tex = candidates.iter().cloned().collect::<BTreeSet<_>>();
     let (edges, _) = build_include_graph(paper_dir, &all_tex);
     let mut included_by = BTreeMap::new();
@@ -408,9 +405,9 @@ fn resolve_root(
 fn build_include_graph(
     _paper_dir: &Path,
     all_tex: &BTreeSet<PathBuf>,
-) -> (IncludeEdges, IncludedBy) {
+) -> (IncludeEdges, IncludeMap) {
     let mut edges = Vec::new();
-    let mut included_by: BTreeMap<PathBuf, BTreeSet<PathBuf>> = BTreeMap::new();
+    let mut included_by: IncludeMap = BTreeMap::new();
 
     for path in all_tex {
         included_by.entry(path.clone()).or_default();

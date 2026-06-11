@@ -7,7 +7,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::latex::scan::{
     scan_latex_with_aliases, BibliographyDecl, DocumentClass, FloatEnv, Graphic, GraphicsPath,
-    Include, Label, PackageImport, Ref, ScanAliases,
+    Include, Label, PackageImport, Ref, ScanAliases, SourceLocation,
 };
 use crate::latex::significant::{mask_discarded_macro_arguments, mask_inactive_regions};
 
@@ -105,6 +105,17 @@ impl ProjectIndex {
         self.labels.iter().any(|label| label.key == key)
     }
 
+    pub fn uses_package(&self, name: &str) -> bool {
+        self.packages.iter().any(|package| package.name == name)
+    }
+
+    pub fn is_after_appendix(&self, location: &SourceLocation) -> bool {
+        self.files
+            .iter()
+            .find(|file| file.path == location.file)
+            .is_some_and(|file| command_line_before_or_at(&file.content, "appendix", location.line))
+    }
+
     pub fn resolve_graphic(&self, graphic: &Graphic) -> Option<PathBuf> {
         resolve_graphic_path(
             &self.root,
@@ -133,6 +144,31 @@ struct ProjectIndexFile {
 
 fn json_io_error(error: serde_json::Error) -> io::Error {
     io::Error::new(io::ErrorKind::InvalidData, error)
+}
+
+fn command_line_before_or_at(content: &str, command: &str, target_line: usize) -> bool {
+    let needle = format!("\\{command}");
+    content
+        .lines()
+        .take(target_line)
+        .any(|line| uncommented_line(line).contains(&needle))
+}
+
+fn uncommented_line(line: &str) -> &str {
+    let mut escaped = false;
+
+    for (index, character) in line.char_indices() {
+        if character == '%' && !escaped {
+            return &line[..index];
+        }
+
+        escaped = character == '\\' && !escaped;
+        if character != '\\' {
+            escaped = false;
+        }
+    }
+
+    line
 }
 
 fn scan_latex_with_project_aliases(
@@ -574,6 +610,21 @@ mod tests {
             .expect("project should index");
 
         assert_eq!(index.files.len(), 3);
+        assert!(index.labels.iter().any(|label| label.key == "sec:method"));
+    }
+
+    #[test]
+    fn follows_subfile_inputs() {
+        let dir = temp_project("subfile-input");
+        let main = dir.join("paper.tex");
+        let section = dir.join("sections/method.tex");
+        write(&main, "\\subfile{sections/method}\n");
+        write(&section, "\\label{sec:method}\n");
+
+        let index = ProjectIndex::build(std::slice::from_ref(&main), std::slice::from_ref(&main))
+            .expect("project should index");
+
+        assert_eq!(index.files.len(), 2);
         assert!(index.labels.iter().any(|label| label.key == "sec:method"));
     }
 

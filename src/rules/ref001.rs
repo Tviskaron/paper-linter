@@ -1,4 +1,5 @@
 use crate::diagnostic::{Diagnostic, Severity};
+use crate::latex::scan::Ref;
 use crate::project::ProjectIndex;
 use crate::rules::ProjectRule;
 
@@ -18,6 +19,7 @@ impl ProjectRule for MissingReferenceTarget {
             .refs
             .iter()
             .filter(|reference| is_static_ref_key(&reference.key))
+            .filter(|reference| !is_package_generated_reference(project, reference))
             .filter(|reference| !project.has_label(&reference.key))
             .map(|reference| {
                 Diagnostic::new(
@@ -42,6 +44,12 @@ impl ProjectRule for MissingReferenceTarget {
 
 fn is_static_ref_key(key: &str) -> bool {
     !key.contains('#')
+}
+
+fn is_package_generated_reference(project: &ProjectIndex, reference: &Ref) -> bool {
+    reference.command == "pageref"
+        && reference.key == "LastPage"
+        && project.uses_package("lastpage")
 }
 
 #[cfg(test)]

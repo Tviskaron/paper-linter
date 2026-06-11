@@ -19,6 +19,7 @@ impl ProjectRule for MissingFigureLabel {
             .floats
             .iter()
             .filter(|env| env.kind == FloatKind::Figure)
+            .filter(|env| env.env_name != "subfigure")
             .filter(|env| env.labels.is_empty())
             .filter(|env| !env.captions.is_empty() || !env.graphics.is_empty())
             .map(|env| {

@@ -195,7 +195,7 @@ static RULE_INFOS: [RuleInfo; 54] = [
         code: "CMT001",
         name: "editorial comment",
         default_severity: Severity::Warning,
-        summary: "A LaTeX comment contains editorial markers such as TODO, FIXME, or REVIEW.",
+        summary: "A LaTeX comment contains editorial markers such as TODO, FIXME, XXX, or TBD.",
         why: "Editorial comments are easy to miss during review and should not appear in submitted papers.",
         fix: "Resolve the note or remove the comment before submission.",
     },

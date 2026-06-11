@@ -14,7 +14,7 @@ An extremely fast linter for LaTeX papers.
 
 ### References & Citations
 
-- Every `\cite{}` key exists in `.bib`.
+- Every `\cite{}` key exists in `.bib` or a fallback `.bbl`.
 - Every `.bib` entry is cited.
 - Required fields: author, year, venue.
 - Duplicate bibliography keys and very similar titles with different keys.
@@ -53,7 +53,8 @@ Current implementation status: the core CLI and rule pipeline are in place, with
 `CIT001`-`CIT006` citation checks and the first Structure & Formatting rules
 implemented:
 
-- `CIT001`-`CIT006`: citation and bibliography consistency checks.
+- `CIT001`-`CIT006`: citation and bibliography consistency checks, with `.bbl`
+  fallback for arXiv sources that omit `.bib` files.
 - `FMT001`: missing final newline.
 - `FMT002`: repeated blank lines.
 - `ENV001`: environment begin/end mismatch.
@@ -149,8 +150,14 @@ paper-linter check paper.tex
 paper-linter check paper.tex --strict
 paper-linter check paper.tex --format json
 paper-linter check . --select WS --ignore WS001
+paper-linter check . --all-tex
 paper-linter check paper.tex refs.bib --select CIT
 ```
+
+For directory inputs, `paper-linter` follows likely root files such as
+`main.tex` through `\input`, `\include`, and `\subfile` references. Use
+`--all-tex` to scan every `.tex` file recursively, including templates, old
+drafts, and samples.
 
 For development, run without installing:
 

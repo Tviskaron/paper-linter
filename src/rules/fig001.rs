@@ -19,6 +19,7 @@ impl ProjectRule for MissingAsset {
             .iter()
             .filter(|graphic| is_static_graphic_path(&graphic.raw_path))
             .filter(|graphic| project.resolve_graphic(graphic).is_none())
+            .filter(|graphic| project.find_graphic_case_mismatch(graphic).is_none())
             .map(|graphic| {
                 Diagnostic::new(
                     self.code(),
@@ -34,7 +35,7 @@ impl ProjectRule for MissingAsset {
     }
 }
 
-fn is_static_graphic_path(path: &str) -> bool {
+pub(crate) fn is_static_graphic_path(path: &str) -> bool {
     !path.contains('#')
 }
 

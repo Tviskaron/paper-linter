@@ -3,6 +3,7 @@ pub(crate) mod citations;
 mod env001;
 mod fig001;
 mod fig002;
+mod fig003;
 mod fmt001;
 mod fmt002;
 mod lbl001;
@@ -55,12 +56,14 @@ static RULES: [&dyn Rule; 9] = [
 static FIG001_RULE: fig001::MissingAsset = fig001::MissingAsset;
 static CAP001_RULE: cap001::MissingCaption = cap001::MissingCaption;
 static FIG002_RULE: fig002::OrphanFigure = fig002::OrphanFigure;
+static FIG003_RULE: fig003::AssetCaseMismatch = fig003::AssetCaseMismatch;
 static TAB001_RULE: tab001::OrphanTable = tab001::OrphanTable;
 static LBL001_RULE: lbl001::UnusedLabel = lbl001::UnusedLabel;
-static PROJECT_RULES: [&dyn ProjectRule; 5] = [
+static PROJECT_RULES: [&dyn ProjectRule; 6] = [
     &FIG001_RULE,
     &CAP001_RULE,
     &FIG002_RULE,
+    &FIG003_RULE,
     &TAB001_RULE,
     &LBL001_RULE,
 ];
@@ -94,7 +97,7 @@ mod tests {
         let codes: Vec<_> = all_project_rules().iter().map(|rule| rule.code()).collect();
         assert_eq!(
             codes,
-            vec!["FIG001", "CAP001", "FIG002", "TAB001", "LBL001"]
+            vec!["FIG001", "CAP001", "FIG002", "FIG003", "TAB001", "LBL001"]
         );
     }
 

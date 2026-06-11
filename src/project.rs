@@ -57,6 +57,15 @@ impl ProjectIndex {
             &self.graphics_paths,
         )
     }
+
+    pub fn find_graphic_case_mismatch(&self, graphic: &Graphic) -> Option<PathBuf> {
+        find_graphic_case_mismatch(
+            &self.root,
+            &graphic.location.file,
+            &graphic.raw_path,
+            &self.graphics_paths,
+        )
+    }
 }
 
 struct ProjectBuilder {
@@ -197,9 +206,34 @@ fn resolve_graphic_path(
     raw_path: &str,
     graphics_paths: &[GraphicsPath],
 ) -> Option<PathBuf> {
+    graphic_candidate_paths(root, current_file, raw_path, graphics_paths)?
+        .into_iter()
+        .find_map(|candidate| {
+            let canonical = candidate.canonicalize().ok()?;
+            canonical.starts_with(root).then_some(canonical)
+        })
+}
+
+fn find_graphic_case_mismatch(
+    root: &Path,
+    current_file: &Path,
+    raw_path: &str,
+    graphics_paths: &[GraphicsPath],
+) -> Option<PathBuf> {
+    graphic_candidate_paths(root, current_file, raw_path, graphics_paths)?
+        .into_iter()
+        .find_map(|candidate| find_case_mismatch(root, &candidate))
+}
+
+fn graphic_candidate_paths(
+    root: &Path,
+    current_file: &Path,
+    raw_path: &str,
+    graphics_paths: &[GraphicsPath],
+) -> Option<Vec<PathBuf>> {
     let base = current_file.parent()?;
     let raw = Path::new(raw_path);
-    let candidates = if raw.is_absolute() {
+    Some(if raw.is_absolute() {
         graphic_candidates(raw.to_path_buf())
     } else {
         let mut candidates = graphic_candidates(base.join(raw));
@@ -215,12 +249,31 @@ fn resolve_graphic_path(
             ));
         }
         candidates
-    };
-
-    candidates.into_iter().find_map(|candidate| {
-        let canonical = candidate.canonicalize().ok()?;
-        canonical.starts_with(root).then_some(canonical)
     })
+}
+
+fn find_case_mismatch(root: &Path, candidate: &Path) -> Option<PathBuf> {
+    if candidate.exists() {
+        return None;
+    }
+
+    let parent = candidate.parent()?;
+    let target_name = candidate.file_name()?.to_str()?;
+
+    for entry in fs::read_dir(parent).ok()? {
+        let entry = entry.ok()?;
+        let file_name = entry.file_name();
+        let file_name = file_name.to_str()?;
+
+        if file_name != target_name && file_name.eq_ignore_ascii_case(target_name) {
+            let canonical = entry.path().canonicalize().ok()?;
+            if canonical.starts_with(root) {
+                return Some(canonical);
+            }
+        }
+    }
+
+    None
 }
 
 fn resolve_graphics_path_base(
@@ -359,5 +412,27 @@ mod tests {
         assert_eq!(index.graphics_paths.len(), 1);
         assert_eq!(index.graphics.len(), 1);
         assert_eq!(index.resolve_graphic(&index.graphics[0]), Some(asset));
+    }
+
+    #[test]
+    fn finds_graphic_case_mismatch() {
+        let dir = temp_project("case-mismatch-graphics");
+        let main = dir.join("paper.tex");
+        let asset = dir.join("images/ROC_Validator.pdf");
+        write(
+            &main,
+            "\\begin{figure}\\includegraphics{images/ROC_validator.pdf}\\end{figure}\n",
+        );
+        write(&asset, "");
+
+        let index = ProjectIndex::build(std::slice::from_ref(&main), std::slice::from_ref(&main))
+            .expect("project should index");
+
+        assert_eq!(index.graphics.len(), 1);
+        assert_eq!(index.resolve_graphic(&index.graphics[0]), None);
+        assert_eq!(
+            index.find_graphic_case_mismatch(&index.graphics[0]),
+            Some(asset)
+        );
     }
 }

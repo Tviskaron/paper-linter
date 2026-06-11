@@ -8,7 +8,7 @@ use serde::{Deserialize, Serialize};
 use crate::latex::scan::{
     scan_latex, DocumentClass, FloatEnv, Graphic, GraphicsPath, Include, Label, PackageImport, Ref,
 };
-use crate::latex::significant::mask_discarded_macro_arguments;
+use crate::latex::significant::{mask_discarded_macro_arguments, mask_inactive_regions};
 
 const GRAPHICS_EXTENSIONS: [&str; 6] = ["pdf", "png", "jpg", "jpeg", "eps", "svg"];
 const PROJECT_INDEX_VERSION: u32 = 1;
@@ -153,6 +153,7 @@ impl ProjectBuilder {
 
         let content = fs::read_to_string(&canonical)?;
         let content = mask_discarded_macro_arguments(&content);
+        let content = mask_inactive_regions(&content);
         let scan = scan_latex(canonical.clone(), &content);
         let includes = scan.includes.clone();
         let mut truncation_line = scan.document_end.as_ref().map(|location| location.line);
@@ -597,6 +598,29 @@ mod tests {
         assert!(!index.has_label("dead"));
         assert!(!index.has_label("included-dead"));
         assert!(!main_file.content.contains("TODO"));
+    }
+
+    #[test]
+    fn ignores_inline_verb_document_end_when_truncating() {
+        let dir = temp_project("verb-document-end");
+        let main = dir.join("paper.tex");
+        write(
+            &main,
+            "\\documentclass{article}\n\\begin{document}\n\\begin{comment}\nUse \\verb|\\end{document}| as text.\n\\end{comment}\n\\label{active}\n\\end{document}\n\\label{dead}\n",
+        );
+
+        let index = ProjectIndex::build(std::slice::from_ref(&main), std::slice::from_ref(&main))
+            .expect("project should index");
+        let main_file = index
+            .files
+            .iter()
+            .find(|file| file.path == canonical(&main))
+            .expect("main file should be indexed");
+
+        assert!(index.has_label("active"));
+        assert!(!index.has_label("dead"));
+        assert!(!main_file.content.contains("\\begin{comment}"));
+        assert!(!main_file.content.contains("\\verb|\\end{document}|"));
     }
 
     #[test]

@@ -46,29 +46,70 @@ fn repeated_word_column(line: &str) -> Option<usize> {
         return None;
     }
 
-    let mut previous: Option<String> = None;
+    let mut previous: Option<WordToken> = None;
 
     for token in words_outside_math_and_comments(line) {
-        let Some((word, column)) = token else {
+        let Some(word) = token else {
             previous = None;
             continue;
         };
 
-        let normalized = word.to_ascii_lowercase();
+        let normalized = word.text.to_ascii_lowercase();
         if previous
             .as_ref()
-            .is_some_and(|previous| previous == &normalized)
+            .is_some_and(|previous| repeated_words_are_adjacent(line, previous, &word, &normalized))
         {
-            return Some(column);
+            return Some(word.column);
         }
 
-        previous = Some(normalized);
+        previous = Some(word);
     }
 
     None
 }
 
-fn words_outside_math_and_comments(line: &str) -> Vec<Option<(&str, usize)>> {
+#[derive(Debug, Clone)]
+struct WordToken {
+    text: String,
+    start: usize,
+    end: usize,
+    column: usize,
+}
+
+fn repeated_words_are_adjacent(
+    line: &str,
+    previous: &WordToken,
+    current: &WordToken,
+    normalized_current: &str,
+) -> bool {
+    previous.text.eq_ignore_ascii_case(normalized_current)
+        && line[previous.end..current.start]
+            .chars()
+            .all(char::is_whitespace)
+        && !is_compound_word_boundary(line, previous.start, previous.end)
+        && !is_compound_word_boundary(line, current.start, current.end)
+}
+
+fn is_compound_word_boundary(line: &str, start: usize, end: usize) -> bool {
+    previous_char(line, start).is_some_and(is_compound_char)
+        || next_char(line, end).is_some_and(is_compound_char)
+}
+
+fn previous_char(line: &str, index: usize) -> Option<char> {
+    line[..index].chars().next_back()
+}
+
+fn next_char(line: &str, index: usize) -> Option<char> {
+    line[index..].chars().next()
+}
+
+fn is_compound_char(character: char) -> bool {
+    matches!(character, '-' | '–' | '/')
+        || character.is_ascii_digit()
+        || character.is_ascii_alphanumeric()
+}
+
+fn words_outside_math_and_comments(line: &str) -> Vec<Option<WordToken>> {
     let mut tokens = Vec::new();
     let mut start = None;
     let mut in_math = false;
@@ -137,17 +178,17 @@ fn words_outside_math_and_comments(line: &str) -> Vec<Option<(&str, usize)>> {
     tokens
 }
 
-fn push_word_token<'a>(
-    tokens: &mut Vec<Option<(&'a str, usize)>>,
-    line: &'a str,
-    start: usize,
-    end: usize,
-) {
+fn push_word_token(tokens: &mut Vec<Option<WordToken>>, line: &str, start: usize, end: usize) {
     let word = &line[start..end];
     if word.len() == 1 {
         tokens.push(None);
     } else {
-        tokens.push(Some((word, byte_to_column(line, start))));
+        tokens.push(Some(WordToken {
+            text: word.to_string(),
+            start,
+            end,
+            column: byte_to_column(line, start),
+        }));
     }
 }
 
@@ -325,12 +366,41 @@ mod tests {
     }
 
     #[test]
-    fn detects_repeated_words_with_punctuation() {
+    fn punctuation_breaks_repeated_word_chain() {
         let diagnostics =
             RepeatedWords.check_file(Path::new("paper.tex"), "This is useful, useful result.\n");
 
-        assert_eq!(diagnostics.len(), 1);
-        assert_eq!(diagnostics[0].column, 17);
+        assert!(diagnostics.is_empty());
+    }
+
+    #[test]
+    fn ignores_hyphenated_compounds() {
+        let diagnostics = RepeatedWords.check_file(
+            Path::new("paper.tex"),
+            "This is a log-log plot with item-item interactions.\n",
+        );
+
+        assert!(diagnostics.is_empty());
+    }
+
+    #[test]
+    fn ignores_alphanumeric_identifiers() {
+        let diagnostics = RepeatedWords.check_file(
+            Path::new("paper.tex"),
+            "We use seq2seq models and CIFAR10 CIFAR100 baselines.\n",
+        );
+
+        assert!(diagnostics.is_empty());
+    }
+
+    #[test]
+    fn ignores_words_adjacent_to_compounds() {
+        let diagnostics = RepeatedWords.check_file(
+            Path::new("paper.tex"),
+            "We report in in-domain and plug-in in our setup.\n",
+        );
+
+        assert!(diagnostics.is_empty());
     }
 
     #[test]

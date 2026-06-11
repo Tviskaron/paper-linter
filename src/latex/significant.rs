@@ -1,5 +1,55 @@
 use std::collections::BTreeSet;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum InactiveReason {
+    LineComment,
+    InlineVerb,
+    OpaqueEnvironment,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct InactiveSpan {
+    pub start: usize,
+    pub end: usize,
+    pub reason: InactiveReason,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SignificantSource {
+    content: String,
+    inactive_spans: Vec<InactiveSpan>,
+}
+
+impl SignificantSource {
+    pub fn new(content: &str) -> Self {
+        let inactive_spans = inactive_spans(content);
+        let mut content = content.to_string();
+        for span in inactive_spans.iter().rev() {
+            if span.reason == InactiveReason::LineComment {
+                continue;
+            }
+            mask_range(&mut content, span.start, span.end);
+        }
+
+        Self {
+            content,
+            inactive_spans,
+        }
+    }
+
+    pub fn content(&self) -> &str {
+        &self.content
+    }
+
+    pub fn inactive_spans(&self) -> &[InactiveSpan] {
+        &self.inactive_spans
+    }
+}
+
+pub fn mask_inactive_regions(content: &str) -> String {
+    SignificantSource::new(content).content
+}
+
 pub fn mask_discarded_macro_arguments(content: &str) -> String {
     let mut masked = content.to_string();
     let mut discard_macros = BTreeSet::new();
@@ -65,6 +115,120 @@ pub fn mask_discarded_macro_arguments(content: &str) -> String {
     }
 
     masked
+}
+
+fn inactive_spans(content: &str) -> Vec<InactiveSpan> {
+    let mut spans = Vec::new();
+    let mut opaque_environments = BTreeSet::from([
+        "comment".to_string(),
+        "verbatim".to_string(),
+        "Verbatim".to_string(),
+        "minted".to_string(),
+        "lstlisting".to_string(),
+    ]);
+    let bytes = content.as_bytes();
+    let mut index = 0;
+
+    while index < content.len() {
+        if bytes[index] == b'%' && !is_escaped(bytes, index) {
+            let end = skip_comment(bytes, index);
+            spans.push(InactiveSpan {
+                start: index,
+                end,
+                reason: InactiveReason::LineComment,
+            });
+            index = end;
+            continue;
+        }
+
+        if bytes[index] != b'\\' {
+            index += 1;
+            continue;
+        }
+
+        let Some((command, after_command)) = read_command_name(content, index) else {
+            index += 1;
+            continue;
+        };
+
+        if command == "verb" {
+            if let Some(end) = inline_verb_end(content, index, after_command) {
+                spans.push(InactiveSpan {
+                    start: index,
+                    end,
+                    reason: InactiveReason::InlineVerb,
+                });
+                index = end;
+                continue;
+            }
+        }
+
+        if command == "excludecomment" {
+            if let Some((arg_start, end)) = read_required_group_range(content, after_command) {
+                let env_name = content[arg_start + 1..end - 1].trim();
+                if !env_name.is_empty() {
+                    opaque_environments.insert(env_name.to_string());
+                }
+                index = end;
+                continue;
+            }
+        }
+
+        if command == "begin" {
+            let Some((arg_start, after_env)) = read_required_group_range(content, after_command)
+            else {
+                index = after_command;
+                continue;
+            };
+            let env_name = content[arg_start + 1..after_env - 1].trim();
+            if opaque_environments.contains(env_name) {
+                let end = opaque_environment_end(content, env_name, after_env);
+                spans.push(InactiveSpan {
+                    start: index,
+                    end,
+                    reason: InactiveReason::OpaqueEnvironment,
+                });
+                index = end;
+                continue;
+            }
+        }
+
+        index = after_command;
+    }
+
+    spans
+}
+
+fn opaque_environment_end(content: &str, env_name: &str, start: usize) -> usize {
+    let needle = format!("\\end{{{env_name}}}");
+    let mut index = start;
+
+    while let Some(relative) = content[index..].find(&needle) {
+        let candidate = index + relative;
+        if !is_escaped(content.as_bytes(), candidate) {
+            return candidate + needle.len();
+        }
+        index = candidate + 1;
+    }
+
+    content.len()
+}
+
+fn inline_verb_end(content: &str, verb_start: usize, after_command: usize) -> Option<usize> {
+    let mut index = after_command;
+    if content.as_bytes().get(index) == Some(&b'*') {
+        index += 1;
+    }
+
+    let delimiter = content[index..].chars().next()?;
+    if delimiter.is_ascii_whitespace() || delimiter == '{' || delimiter == '}' {
+        return None;
+    }
+
+    let content_start = index + delimiter.len_utf8();
+    let relative_end = content[content_start..].find(delimiter)?;
+    let end = content_start + relative_end + delimiter.len_utf8();
+    (end > verb_start).then_some(end)
 }
 
 fn update_discard_macro(discard_macros: &mut BTreeSet<String>, macro_name: &str, body: &str) {
@@ -239,7 +403,9 @@ fn mask_range(content: &mut String, start: usize, end: usize) {
 
 #[cfg(test)]
 mod tests {
-    use super::mask_discarded_macro_arguments;
+    use super::{
+        mask_discarded_macro_arguments, mask_inactive_regions, InactiveReason, SignificantSource,
+    };
 
     #[test]
     fn masks_long_def_relax_macro_argument() {
@@ -279,5 +445,70 @@ mod tests {
         let masked = mask_discarded_macro_arguments(content);
 
         assert!(!masked.contains("TODO"));
+    }
+
+    #[test]
+    fn masks_inline_verb_regions() {
+        let content = "Text \\verb|\\end{document}| after\n\\end{document}\n";
+
+        let source = SignificantSource::new(content);
+
+        assert!(!source.content().contains("\\verb|\\end{document}|"));
+        assert!(source.content().contains("\\end{document}"));
+        assert_eq!(
+            source.inactive_spans()[0].reason,
+            InactiveReason::InlineVerb
+        );
+        assert_eq!(source.content().lines().count(), content.lines().count());
+        assert_eq!(source.content().len(), content.len());
+    }
+
+    #[test]
+    fn masks_comment_environments() {
+        let content = "\\begin{comment}\nTODO\n\\end{comment}\nActive\n";
+
+        let masked = mask_inactive_regions(content);
+
+        assert!(!masked.contains("TODO"));
+        assert!(masked.contains("Active"));
+        assert_eq!(masked.lines().count(), content.lines().count());
+    }
+
+    #[test]
+    fn masks_excluded_comment_environments() {
+        let content =
+            "\\excludecomment{draftonly}\n\\begin{draftonly}\nTODO\n\\end{draftonly}\nActive\n";
+
+        let masked = mask_inactive_regions(content);
+
+        assert!(masked.contains("\\excludecomment{draftonly}"));
+        assert!(!masked.contains("TODO"));
+        assert!(masked.contains("Active"));
+    }
+
+    #[test]
+    fn masks_multiple_opaque_environments_after_unicode_text() {
+        let content = "\\begin{comment}\n“unicode”\n\\end{comment}\n\\begin{comment}\nTODO\n\\end{comment}\nActive\n";
+
+        let masked = mask_inactive_regions(content);
+
+        assert!(!masked.contains("\\begin{comment}"));
+        assert!(!masked.contains("TODO"));
+        assert!(masked.contains("Active"));
+    }
+
+    #[test]
+    fn masks_line_comments() {
+        let content = "Active % TODO hidden\nNext\n";
+
+        let source = SignificantSource::new(content);
+
+        assert_eq!(
+            source.inactive_spans()[0].reason,
+            InactiveReason::LineComment
+        );
+        assert!(source.content().contains("Active"));
+        assert!(source.content().contains("TODO"));
+        assert!(source.content().contains("Next"));
     }
 }

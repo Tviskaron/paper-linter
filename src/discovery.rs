@@ -10,6 +10,8 @@ pub fn discover_tex_files(paths: &[PathBuf], all_tex: bool) -> io::Result<Vec<Pa
             if is_tex_file(path) {
                 if all_tex {
                     files.push(path.clone());
+                } else if let Some(root) = magic_root_path(path)? {
+                    collect_reachable_tex_files(&root, &mut files)?;
                 } else {
                     collect_reachable_tex_files(path, &mut files)?;
                 }
@@ -126,6 +128,27 @@ fn matching_bbl_path(path: &Path) -> PathBuf {
     bbl
 }
 
+fn magic_root_path(path: &Path) -> io::Result<Option<PathBuf>> {
+    let content = fs::read_to_string(path)?;
+    let Some(raw_root) = find_magic_root(&content) else {
+        return Ok(None);
+    };
+
+    let mut root = path
+        .parent()
+        .unwrap_or_else(|| Path::new(""))
+        .join(raw_root.trim());
+    if root.extension().is_none() {
+        root.set_extension("tex");
+    }
+
+    if root.is_file() {
+        return root.canonicalize().map(Some);
+    }
+
+    Ok(None)
+}
+
 fn collect_reachable_tex_files(root: &Path, files: &mut Vec<PathBuf>) -> io::Result<()> {
     if files.iter().any(|file| file == root) {
         return Ok(());
@@ -146,6 +169,29 @@ fn collect_reachable_tex_files(root: &Path, files: &mut Vec<PathBuf>) -> io::Res
 
 fn declares_document(content: &str) -> bool {
     content.contains("\\documentclass") || content.contains("\\begin{document}")
+}
+
+fn find_magic_root(content: &str) -> Option<String> {
+    for line in content.lines() {
+        let trimmed = line.trim_start();
+        let Some(comment) = trimmed.strip_prefix('%') else {
+            continue;
+        };
+        let comment = comment.trim_start();
+        let comment = comment.strip_prefix('!').unwrap_or(comment).trim_start();
+        let lower = comment.to_ascii_lowercase();
+        if !lower.starts_with("tex root") {
+            continue;
+        }
+
+        let (_, value) = comment.split_once('=')?;
+        let value = value.trim().trim_matches('"').trim_matches('\'');
+        if !value.is_empty() {
+            return Some(value.to_string());
+        }
+    }
+
+    None
 }
 
 fn is_main_like_name(name: &str) -> bool {
@@ -292,4 +338,66 @@ fn is_commented_position(content: &str, byte_index: usize) -> bool {
     }
 
     false
+}
+
+#[cfg(test)]
+mod tests {
+    use std::fs;
+    use std::path::{Path, PathBuf};
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    use super::find_magic_root;
+    use super::magic_root_path;
+
+    fn temp_project(name: &str) -> PathBuf {
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system time before unix epoch")
+            .as_nanos();
+        let dir = std::env::temp_dir().join(format!("paper-linter-discovery-{name}-{nonce}"));
+        fs::create_dir_all(&dir).expect("failed to create temp project");
+        dir
+    }
+
+    fn write(path: &Path, content: &str) {
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent).expect("failed to create parent");
+        }
+        fs::write(path, content).expect("failed to write fixture");
+    }
+
+    #[test]
+    fn finds_tex_root_magic_comments() {
+        assert_eq!(
+            find_magic_root("%! TeX root = ../main.tex\n"),
+            Some("../main.tex".to_string())
+        );
+        assert_eq!(
+            find_magic_root("% !TEX root = paper\n"),
+            Some("paper".to_string())
+        );
+        assert_eq!(
+            find_magic_root("%! TEX root = \"manuscript.tex\"\n"),
+            Some("manuscript.tex".to_string())
+        );
+    }
+
+    #[test]
+    fn ignores_non_root_comments() {
+        assert_eq!(find_magic_root("% TODO root = main.tex\n"), None);
+    }
+
+    #[test]
+    fn resolves_magic_root_relative_to_current_file() {
+        let dir = temp_project("magic-root");
+        let section = dir.join("sections/method.tex");
+        let root = dir.join("main.tex");
+        write(&root, "\\documentclass{article}\n");
+        write(&section, "%! TeX root = ../main.tex\n");
+
+        assert_eq!(
+            magic_root_path(&section).expect("root should parse"),
+            Some(root)
+        );
+    }
 }

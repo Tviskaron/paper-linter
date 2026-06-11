@@ -49,6 +49,10 @@ impl ProjectIndex {
         self.refs.iter().any(|reference| reference.key == key)
     }
 
+    pub fn has_label(&self, key: &str) -> bool {
+        self.labels.iter().any(|label| label.key == key)
+    }
+
     pub fn resolve_graphic(&self, graphic: &Graphic) -> Option<PathBuf> {
         resolve_graphic_path(
             &self.root,
@@ -150,11 +154,9 @@ fn infer_project_root(
         }
     }
 
-    if roots.is_empty() {
-        for file in discovered_files {
-            if let Some(parent) = file.parent() {
-                roots.push(canonicalize_existing(parent)?);
-            }
+    for file in discovered_files {
+        if let Some(parent) = file.parent() {
+            roots.push(canonicalize_existing(parent)?);
         }
     }
 
@@ -355,6 +357,8 @@ mod tests {
         assert_eq!(index.files.len(), 3);
         assert!(index.labels.iter().any(|label| label.key == "sec:method"));
         assert!(index.is_referenced("sec:method"));
+        assert!(index.has_label("sec:method"));
+        assert!(!index.has_label("sec:missing"));
     }
 
     #[test]

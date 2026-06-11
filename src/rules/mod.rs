@@ -4,12 +4,15 @@ mod env001;
 mod fig001;
 mod fig002;
 mod fig003;
+mod fig004;
 mod fmt001;
 mod fmt002;
 mod lbl001;
+mod ref001;
 mod sec001;
 mod sec002;
 mod tab001;
+mod tab002;
 mod tex001;
 mod txt001;
 mod txt002;
@@ -57,14 +60,20 @@ static FIG001_RULE: fig001::MissingAsset = fig001::MissingAsset;
 static CAP001_RULE: cap001::MissingCaption = cap001::MissingCaption;
 static FIG002_RULE: fig002::OrphanFigure = fig002::OrphanFigure;
 static FIG003_RULE: fig003::AssetCaseMismatch = fig003::AssetCaseMismatch;
+static FIG004_RULE: fig004::MissingFigureLabel = fig004::MissingFigureLabel;
 static TAB001_RULE: tab001::OrphanTable = tab001::OrphanTable;
+static TAB002_RULE: tab002::MissingTableLabel = tab002::MissingTableLabel;
 static LBL001_RULE: lbl001::UnusedLabel = lbl001::UnusedLabel;
-static PROJECT_RULES: [&dyn ProjectRule; 6] = [
+static REF001_RULE: ref001::MissingReferenceTarget = ref001::MissingReferenceTarget;
+static PROJECT_RULES: [&dyn ProjectRule; 9] = [
     &FIG001_RULE,
     &CAP001_RULE,
     &FIG002_RULE,
     &FIG003_RULE,
+    &FIG004_RULE,
     &TAB001_RULE,
+    &TAB002_RULE,
+    &REF001_RULE,
     &LBL001_RULE,
 ];
 
@@ -86,7 +95,7 @@ pub struct RuleInfo {
     pub fix: &'static str,
 }
 
-static RULE_INFOS: [RuleInfo; 20] = [
+static RULE_INFOS: [RuleInfo; 24] = [
     RuleInfo {
         code: "CAP001",
         name: "caption missing",
@@ -168,6 +177,22 @@ static RULE_INFOS: [RuleInfo; 20] = [
         fix: "Reference the figure with \\ref{...} or remove the unused figure/label.",
     },
     RuleInfo {
+        code: "FIG003",
+        name: "asset case mismatch",
+        default_severity: Severity::Error,
+        summary: "A figure asset path differs from an existing filename only by letter case.",
+        why: "Case mismatches compile on some local filesystems but fail on case-sensitive CI, Linux, or arXiv environments.",
+        fix: "Match the case in the \\includegraphics path to the actual asset filename.",
+    },
+    RuleInfo {
+        code: "FIG004",
+        name: "figure label missing",
+        default_severity: Severity::Warning,
+        summary: "A figure-like float has content but no label.",
+        why: "Unlabeled figures cannot be referenced robustly and often lead authors to hard-code figure numbers.",
+        fix: "Add a \\label{fig:...} near the figure caption.",
+    },
+    RuleInfo {
         code: "FMT001",
         name: "missing final newline",
         default_severity: Severity::Warning,
@@ -192,6 +217,14 @@ static RULE_INFOS: [RuleInfo; 20] = [
         fix: "Reference the label with \\ref{...} or remove it.",
     },
     RuleInfo {
+        code: "REF001",
+        name: "missing reference target",
+        default_severity: Severity::Error,
+        summary: "A reference command points to a label that is not defined in reachable TeX sources.",
+        why: "Missing reference targets usually become unresolved references in the rendered PDF and often indicate a typo or missing included file.",
+        fix: "Add the matching \\label{...}, fix the reference key, or make sure the file defining the label is reachable from the project root.",
+    },
+    RuleInfo {
         code: "SEC001",
         name: "skipped section hierarchy level",
         default_severity: Severity::Warning,
@@ -214,6 +247,14 @@ static RULE_INFOS: [RuleInfo; 20] = [
         summary: "A table label is not referenced from reachable TeX sources.",
         why: "Unreferenced tables are often stale draft material or missing narrative links in the paper.",
         fix: "Reference the table with \\ref{...} or remove the unused table/label.",
+    },
+    RuleInfo {
+        code: "TAB002",
+        name: "table label missing",
+        default_severity: Severity::Warning,
+        summary: "A table-like float has a caption but no label.",
+        why: "Unlabeled tables cannot be referenced robustly and often lead authors to hard-code table numbers.",
+        fix: "Add a \\label{tab:...} near the table caption.",
     },
     RuleInfo {
         code: "TEX001",
@@ -280,7 +321,10 @@ mod tests {
         let codes: Vec<_> = all_project_rules().iter().map(|rule| rule.code()).collect();
         assert_eq!(
             codes,
-            vec!["FIG001", "CAP001", "FIG002", "FIG003", "TAB001", "LBL001"]
+            vec![
+                "FIG001", "CAP001", "FIG002", "FIG003", "FIG004", "TAB001", "TAB002", "REF001",
+                "LBL001"
+            ]
         );
     }
 
@@ -302,8 +346,8 @@ mod tests {
             codes,
             vec![
                 "CAP001", "CIT001", "CIT002", "CIT003", "CIT004", "CIT005", "CIT006", "ENV001",
-                "FIG001", "FIG002", "FMT001", "FMT002", "LBL001", "SEC001", "SEC002", "TAB001",
-                "TEX001", "TXT001", "TXT002", "WS001"
+                "FIG001", "FIG002", "FIG003", "FIG004", "FMT001", "FMT002", "LBL001", "REF001",
+                "SEC001", "SEC002", "TAB001", "TAB002", "TEX001", "TXT001", "TXT002", "WS001"
             ]
         );
     }

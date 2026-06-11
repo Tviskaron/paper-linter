@@ -5,6 +5,7 @@ pub mod config;
 pub mod diagnostic;
 pub mod discovery;
 pub mod doctor;
+pub mod formatter;
 pub mod latex;
 pub mod output;
 pub mod project;

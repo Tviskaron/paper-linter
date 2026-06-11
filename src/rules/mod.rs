@@ -1,4 +1,4 @@
-pub mod citations;
+pub(crate) mod citations;
 mod env001;
 mod fmt001;
 mod fmt002;

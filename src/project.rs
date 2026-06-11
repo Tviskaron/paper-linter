@@ -3,7 +3,7 @@ use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
 
-use crate::latex::scan::{scan_latex, FloatEnv, Graphic, Include, Label, Ref};
+use crate::latex::scan::{scan_latex, FloatEnv, Graphic, GraphicsPath, Include, Label, Ref};
 
 const GRAPHICS_EXTENSIONS: [&str; 6] = ["pdf", "png", "jpg", "jpeg", "eps", "svg"];
 
@@ -20,6 +20,7 @@ pub struct ProjectIndex {
     pub labels: Vec<Label>,
     pub refs: Vec<Ref>,
     pub graphics: Vec<Graphic>,
+    pub graphics_paths: Vec<GraphicsPath>,
     pub floats: Vec<FloatEnv>,
 }
 
@@ -33,6 +34,7 @@ impl ProjectIndex {
             labels: Vec::new(),
             refs: Vec::new(),
             graphics: Vec::new(),
+            graphics_paths: Vec::new(),
             floats: Vec::new(),
         };
 
@@ -48,7 +50,12 @@ impl ProjectIndex {
     }
 
     pub fn resolve_graphic(&self, graphic: &Graphic) -> Option<PathBuf> {
-        resolve_graphic_path(&self.root, &graphic.location.file, &graphic.raw_path)
+        resolve_graphic_path(
+            &self.root,
+            &graphic.location.file,
+            &graphic.raw_path,
+            &self.graphics_paths,
+        )
     }
 }
 
@@ -59,6 +66,7 @@ struct ProjectBuilder {
     labels: Vec<Label>,
     refs: Vec<Ref>,
     graphics: Vec<Graphic>,
+    graphics_paths: Vec<GraphicsPath>,
     floats: Vec<FloatEnv>,
 }
 
@@ -76,6 +84,7 @@ impl ProjectBuilder {
         self.labels.extend(scan.labels);
         self.refs.extend(scan.refs);
         self.graphics.extend(scan.graphics);
+        self.graphics_paths.extend(scan.graphics_paths);
         self.floats.extend(scan.floats);
         self.files.push(SourceFile {
             path: canonical.clone(),
@@ -99,6 +108,8 @@ impl ProjectBuilder {
             .sort_by(|left, right| left.location.file.cmp(&right.location.file));
         self.graphics
             .sort_by(|left, right| left.location.file.cmp(&right.location.file));
+        self.graphics_paths
+            .sort_by(|left, right| left.location.file.cmp(&right.location.file));
         self.floats
             .sort_by(|left, right| left.location.file.cmp(&right.location.file));
 
@@ -108,6 +119,7 @@ impl ProjectBuilder {
             labels: self.labels,
             refs: self.refs,
             graphics: self.graphics,
+            graphics_paths: self.graphics_paths,
             floats: self.floats,
         }
     }
@@ -179,15 +191,58 @@ fn resolve_include_path(root: &Path, current_file: &Path, include: &Include) -> 
     })
 }
 
-fn resolve_graphic_path(root: &Path, current_file: &Path, raw_path: &str) -> Option<PathBuf> {
+fn resolve_graphic_path(
+    root: &Path,
+    current_file: &Path,
+    raw_path: &str,
+    graphics_paths: &[GraphicsPath],
+) -> Option<PathBuf> {
     let base = current_file.parent()?;
     let raw = Path::new(raw_path);
-    let candidate = if raw.is_absolute() {
-        raw.to_path_buf()
+    let candidates = if raw.is_absolute() {
+        graphic_candidates(raw.to_path_buf())
     } else {
-        base.join(raw)
+        let mut candidates = graphic_candidates(base.join(raw));
+        candidates.extend(graphic_candidates(root.join(raw)));
+        for graphics_path in graphics_paths {
+            candidates.extend(graphic_candidates(
+                resolve_graphics_path_base(
+                    root,
+                    &graphics_path.location.file,
+                    &graphics_path.raw_path,
+                )?
+                .join(raw),
+            ));
+        }
+        candidates
     };
 
+    candidates.into_iter().find_map(|candidate| {
+        let canonical = candidate.canonicalize().ok()?;
+        canonical.starts_with(root).then_some(canonical)
+    })
+}
+
+fn resolve_graphics_path_base(
+    root: &Path,
+    declaring_file: &Path,
+    raw_path: &str,
+) -> Option<PathBuf> {
+    let raw = Path::new(raw_path);
+    if raw.is_absolute() {
+        return Some(raw.to_path_buf());
+    }
+
+    let declaring_dir = declaring_file.parent()?;
+    let local = declaring_dir.join(raw);
+    if local.exists() {
+        return Some(local);
+    }
+
+    Some(root.join(raw))
+}
+
+fn graphic_candidates(candidate: PathBuf) -> Vec<PathBuf> {
     let mut candidates = vec![candidate.clone()];
     if candidate.extension().is_none() {
         candidates.extend(
@@ -196,11 +251,7 @@ fn resolve_graphic_path(root: &Path, current_file: &Path, raw_path: &str) -> Opt
                 .map(|extension| candidate.with_extension(extension)),
         );
     }
-
-    candidates.into_iter().find_map(|candidate| {
-        let canonical = candidate.canonicalize().ok()?;
-        canonical.starts_with(root).then_some(canonical)
-    })
+    candidates
 }
 
 fn canonicalize_existing(path: &Path) -> io::Result<PathBuf> {
@@ -267,6 +318,45 @@ mod tests {
         let index = ProjectIndex::build(std::slice::from_ref(&main), std::slice::from_ref(&main))
             .expect("project should index");
 
+        assert_eq!(index.graphics.len(), 1);
+        assert_eq!(index.resolve_graphic(&index.graphics[0]), Some(asset));
+    }
+
+    #[test]
+    fn resolves_graphic_relative_to_project_root_from_included_file() {
+        let dir = temp_project("root-relative-graphics");
+        let main = dir.join("paper.tex");
+        let section = dir.join("sections/method.tex");
+        let asset = dir.join("figures/model.pdf");
+        write(&main, "\\input{sections/method}\n");
+        write(
+            &section,
+            "\\begin{figure}\\includegraphics{figures/model}\\end{figure}\n",
+        );
+        write(&asset, "");
+
+        let index = ProjectIndex::build(std::slice::from_ref(&main), std::slice::from_ref(&main))
+            .expect("project should index");
+
+        assert_eq!(index.graphics.len(), 1);
+        assert_eq!(index.resolve_graphic(&index.graphics[0]), Some(asset));
+    }
+
+    #[test]
+    fn resolves_graphic_using_graphicspath() {
+        let dir = temp_project("graphicspath");
+        let main = dir.join("paper.tex");
+        let asset = dir.join("images/model.png");
+        write(
+            &main,
+            "\\graphicspath{{images/}}\n\\begin{figure}\\includegraphics{model}\\end{figure}\n",
+        );
+        write(&asset, "");
+
+        let index = ProjectIndex::build(std::slice::from_ref(&main), std::slice::from_ref(&main))
+            .expect("project should index");
+
+        assert_eq!(index.graphics_paths.len(), 1);
         assert_eq!(index.graphics.len(), 1);
         assert_eq!(index.resolve_graphic(&index.graphics[0]), Some(asset));
     }

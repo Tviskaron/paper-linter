@@ -12,6 +12,7 @@ pub struct Suppressions {
 #[derive(Debug, Default)]
 struct FileSuppressions {
     file_rules: Vec<String>,
+    line_rules: BTreeMap<usize, Vec<String>>,
     next_line_rules: BTreeMap<usize, Vec<String>>,
 }
 
@@ -40,11 +41,15 @@ impl Suppressions {
 
 impl FileSuppressions {
     fn is_empty(&self) -> bool {
-        self.file_rules.is_empty() && self.next_line_rules.is_empty()
+        self.file_rules.is_empty() && self.line_rules.is_empty() && self.next_line_rules.is_empty()
     }
 
     fn suppresses(&self, diagnostic: &Diagnostic) -> bool {
         matches_rule(&self.file_rules, diagnostic.code)
+            || self
+                .line_rules
+                .get(&diagnostic.line)
+                .is_some_and(|rules| matches_rule(rules, diagnostic.code))
             || self
                 .next_line_rules
                 .get(&diagnostic.line)
@@ -67,6 +72,12 @@ fn parse_file_suppressions(content: &str) -> FileSuppressions {
         match directive {
             "paper-linter-ignore-file" => {
                 append_unique(&mut suppressions.file_rules, rules);
+            }
+            "paper-linter-ignore-line" => {
+                append_unique(
+                    suppressions.line_rules.entry(line_number).or_default(),
+                    rules,
+                );
             }
             "paper-linter-ignore-next-line" => {
                 append_unique(
@@ -99,7 +110,7 @@ fn parse_directive(comment: &str) -> Option<(&str, Vec<String>)> {
     let directive = parts.next()?;
     if !matches!(
         directive,
-        "paper-linter-ignore-file" | "paper-linter-ignore-next-line"
+        "paper-linter-ignore-file" | "paper-linter-ignore-line" | "paper-linter-ignore-next-line"
     ) {
         return None;
     }
@@ -182,6 +193,19 @@ mod tests {
 
         assert!(suppressions.suppresses(&diagnostic("CIT001", 10)));
         assert!(!suppressions.suppresses(&diagnostic("FIG001", 10)));
+    }
+
+    #[test]
+    fn suppresses_same_line_by_rule_prefix() {
+        let source = SourceFile {
+            path: PathBuf::from("paper.tex"),
+            content: "trailing  % paper-linter-ignore-line WS\n".to_string(),
+        };
+        let suppressions = Suppressions::from_sources(&[source]);
+
+        assert!(suppressions.suppresses(&diagnostic("WS001", 1)));
+        assert!(!suppressions.suppresses(&diagnostic("TXT001", 1)));
+        assert!(!suppressions.suppresses(&diagnostic("WS001", 2)));
     }
 
     #[test]

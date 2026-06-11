@@ -195,9 +195,15 @@ fn unbraced_script_columns(
 ) -> impl Iterator<Item = usize> + '_ {
     let mut columns = Vec::new();
     let bytes = line.as_bytes();
+    let ignored_ranges = ignored_command_argument_ranges(line, start, end);
     let mut index = start;
 
     while index < end {
+        if let Some(range) = ignored_ranges.iter().find(|range| range.contains(index)) {
+            index = range.end;
+            continue;
+        }
+
         if matches!(bytes[index], b'^' | b'_') && !is_escaped(line, index) {
             let mut token_start = index + 1;
             while token_start < end && bytes[token_start].is_ascii_whitespace() {
@@ -225,6 +231,116 @@ fn unbraced_script_columns(
     }
 
     columns.into_iter()
+}
+
+fn ignored_command_argument_ranges(line: &str, start: usize, end: usize) -> Vec<ByteRange> {
+    let mut ranges = Vec::new();
+    let mut index = start;
+
+    while index < end {
+        if line.as_bytes()[index] != b'\\' {
+            index += 1;
+            continue;
+        }
+
+        let Some((command, after_command)) = read_command_name(line, index) else {
+            index += 1;
+            continue;
+        };
+        if !is_ignored_argument_command(command) {
+            index = after_command;
+            continue;
+        }
+
+        let Some((arg_start, arg_end)) = required_group_range(line, after_command, end) else {
+            index = after_command;
+            continue;
+        };
+        ranges.push(ByteRange {
+            start: arg_start,
+            end: arg_end,
+        });
+        index = arg_end;
+    }
+
+    ranges
+}
+
+impl ByteRange {
+    fn contains(self, index: usize) -> bool {
+        self.start <= index && index < self.end
+    }
+}
+
+fn read_command_name(line: &str, slash_index: usize) -> Option<(&str, usize)> {
+    if line.as_bytes().get(slash_index) != Some(&b'\\') {
+        return None;
+    }
+
+    let command_start = slash_index + 1;
+    let mut command_end = command_start;
+    while command_end < line.len() && line.as_bytes()[command_end].is_ascii_alphabetic() {
+        command_end += 1;
+    }
+    (command_end > command_start).then(|| (&line[command_start..command_end], command_end))
+}
+
+fn required_group_range(line: &str, start: usize, limit: usize) -> Option<(usize, usize)> {
+    let bytes = line.as_bytes();
+    let mut index = start;
+    while index < limit && bytes[index].is_ascii_whitespace() {
+        index += 1;
+    }
+    if bytes.get(index) != Some(&b'{') {
+        return None;
+    }
+
+    let mut depth = 1usize;
+    let mut cursor = index + 1;
+    while cursor < limit {
+        match bytes[cursor] {
+            b'\\' => cursor = (cursor + 2).min(limit),
+            b'{' => {
+                depth += 1;
+                cursor += 1;
+            }
+            b'}' => {
+                depth -= 1;
+                cursor += 1;
+                if depth == 0 {
+                    return Some((index, cursor));
+                }
+            }
+            _ => cursor += 1,
+        }
+    }
+
+    None
+}
+
+fn is_ignored_argument_command(command: &str) -> bool {
+    matches!(
+        command,
+        "label"
+            | "ref"
+            | "eqref"
+            | "autoref"
+            | "cref"
+            | "Cref"
+            | "pageref"
+            | "nameref"
+            | "includegraphics"
+            | "input"
+            | "include"
+            | "url"
+            | "href"
+            | "cite"
+            | "citep"
+            | "citet"
+            | "citealp"
+            | "parencite"
+            | "textcite"
+    )
 }
 
 fn uncommented_line(line: &str) -> &str {
@@ -367,5 +483,14 @@ mod tests {
         let diagnostics = UnbracedMathScript.check_file(Path::new("paper.tex"), content);
 
         assert!(diagnostics.is_empty());
+    }
+
+    #[test]
+    fn ignores_non_math_command_arguments_inside_math() {
+        let content = "\\begin{equation}\n\\label{eq:main_task} \\ref{alg:local_sgd} \\includegraphics{pics/ipmf_diagramm_new.png} + x^10\n\\end{equation}\n";
+        let diagnostics = UnbracedMathScript.check_file(Path::new("paper.tex"), content);
+
+        assert_eq!(diagnostics.len(), 1);
+        assert!(diagnostics[0].message.contains("multiple characters"));
     }
 }

@@ -94,6 +94,13 @@ pub struct Include {
 }
 
 #[derive(Debug, Clone, Deserialize, PartialEq, Eq, Serialize)]
+pub struct BibliographyDecl {
+    pub raw_path: String,
+    pub command: String,
+    pub location: SourceLocation,
+}
+
+#[derive(Debug, Clone, Deserialize, PartialEq, Eq, Serialize)]
 pub struct DocumentClass {
     pub name: String,
     pub options: Vec<String>,
@@ -125,10 +132,28 @@ pub struct ScanResult {
     pub graphics: Vec<Graphic>,
     pub graphics_paths: Vec<GraphicsPath>,
     pub includes: Vec<Include>,
+    pub bibliographies: Vec<BibliographyDecl>,
     pub document_classes: Vec<DocumentClass>,
     pub packages: Vec<PackageImport>,
     pub floats: Vec<FloatEnv>,
     pub document_end: Option<SourceLocation>,
+}
+
+#[derive(Debug, Clone, Default, Deserialize, PartialEq, Eq, Serialize)]
+pub struct ScanAliases {
+    pub cites: Vec<String>,
+    pub refs: Vec<String>,
+    pub inputs: Vec<String>,
+    pub graphics: Vec<String>,
+}
+
+impl ScanAliases {
+    pub fn merge_missing(&mut self, other: &Self) {
+        append_missing(&mut self.cites, &other.cites);
+        append_missing(&mut self.refs, &other.refs);
+        append_missing(&mut self.inputs, &other.inputs);
+        append_missing(&mut self.graphics, &other.graphics);
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -149,6 +174,14 @@ struct LabelMacro {
 }
 
 pub fn scan_latex(file: impl Into<PathBuf>, content: &str) -> ScanResult {
+    scan_latex_with_aliases(file, content, &ScanAliases::default())
+}
+
+pub fn scan_latex_with_aliases(
+    file: impl Into<PathBuf>,
+    content: &str,
+    aliases: &ScanAliases,
+) -> ScanResult {
     let file = file.into();
     let bytes = content.as_bytes();
     let line_starts = line_starts(content);
@@ -180,6 +213,15 @@ pub fn scan_latex(file: impl Into<PathBuf>, content: &str) -> ScanResult {
         match command.as_str() {
             "begin" => {
                 if let Some((env_name, end)) = parse_required_arg(content, after_command) {
+                    let optional_end = collect_begin_option_labels(
+                        content,
+                        &env_name,
+                        end,
+                        &location,
+                        &mut stack,
+                        &mut result,
+                    )
+                    .unwrap_or(end);
                     stack.push(ActiveEnv {
                         kind: float_kind(&env_name),
                         ignored: ignored_env(&env_name),
@@ -189,7 +231,7 @@ pub fn scan_latex(file: impl Into<PathBuf>, content: &str) -> ScanResult {
                         captions: Vec::new(),
                         graphics: Vec::new(),
                     });
-                    index = end;
+                    index = optional_end;
                 } else {
                     index = after_command;
                 }
@@ -213,9 +255,12 @@ pub fn scan_latex(file: impl Into<PathBuf>, content: &str) -> ScanResult {
             _ if in_ignored => {
                 index = after_command;
             }
-            "includegraphics" => {
+            command_name
+                if command_name == "includegraphics" || aliases.matches_graphic(command_name) =>
+            {
                 let arg_start = skip_optional_args(content, after_command);
                 if let Some((raw_path, end)) = parse_required_arg(content, arg_start) {
+                    let raw_path = normalize_graphic_path(&raw_path);
                     let graphic = Graphic { raw_path, location };
                     attach_graphic(&mut stack, graphic.clone());
                     result.graphics.push(graphic);
@@ -262,26 +307,19 @@ pub fn scan_latex(file: impl Into<PathBuf>, content: &str) -> ScanResult {
                     index = after_command;
                 }
             }
-            "label" => {
+            command_name if is_builtin_label_command(command_name) => {
                 if let Some((key, end)) = parse_required_arg(content, after_command) {
-                    let kind = LabelKind::from(current_float_kind(&stack));
-                    let label = Label {
-                        key,
-                        kind,
-                        location,
-                    };
-                    attach_label(&mut stack, label.clone());
-                    result.labels.push(label);
+                    push_label(key, location.clone(), &mut stack, &mut result);
                     index = end;
                 } else {
                     index = after_command;
                 }
             }
-            "ref" | "autoref" | "cref" | "Cref" | "pageref" | "nameref" => {
+            command_name if is_ref_command(command_name) || aliases.matches_ref(command_name) => {
                 if let Some((keys, end)) = parse_required_arg(content, after_command) {
-                    for key in keys.split(',').map(str::trim).filter(|key| !key.is_empty()) {
+                    for key in ref_keys(command_name, &keys) {
                         result.refs.push(Ref {
-                            key: key.to_string(),
+                            key,
                             command: command.clone(),
                             location: location.clone(),
                         });
@@ -309,9 +347,28 @@ pub fn scan_latex(file: impl Into<PathBuf>, content: &str) -> ScanResult {
                 )
                 .unwrap_or(after_command);
             }
-            "input" | "include" => {
+            command_name
+                if is_input_command(command_name) || aliases.matches_input(command_name) =>
+            {
                 if let Some((raw_path, end)) = parse_include_arg(content, after_command) {
                     result.includes.push(Include { raw_path, location });
+                    index = end;
+                } else {
+                    index = after_command;
+                }
+            }
+            "bibliography" | "addbibresource" => {
+                let arg_start = skip_optional_args(content, after_command);
+                if let Some((paths, end)) = parse_required_arg(content, arg_start) {
+                    result
+                        .bibliographies
+                        .extend(split_comma_list(&paths).into_iter().map(|raw_path| {
+                            BibliographyDecl {
+                                raw_path,
+                                command: command.clone(),
+                                location: location.clone(),
+                            }
+                        }));
                     index = end;
                 } else {
                     index = after_command;
@@ -363,6 +420,59 @@ pub fn scan_latex(file: impl Into<PathBuf>, content: &str) -> ScanResult {
     result
 }
 
+impl ScanAliases {
+    fn matches_ref(&self, command: &str) -> bool {
+        self.refs.iter().any(|alias| alias == command)
+    }
+
+    fn matches_input(&self, command: &str) -> bool {
+        self.inputs.iter().any(|alias| alias == command)
+    }
+
+    fn matches_graphic(&self, command: &str) -> bool {
+        self.graphics.iter().any(|alias| alias == command)
+    }
+}
+
+fn is_ref_command(command: &str) -> bool {
+    matches!(
+        command,
+        "ref" | "eqref" | "autoref" | "cref" | "Cref" | "pageref" | "nameref"
+    )
+}
+
+fn is_input_command(command: &str) -> bool {
+    matches!(command, "input" | "include" | "subfile")
+}
+
+fn is_builtin_label_command(command: &str) -> bool {
+    matches!(
+        command,
+        "label" | "lb" | "alglinelabel" | "algonlinelinelabel" | "alglinelabellower"
+    )
+}
+
+fn ref_keys(command: &str, keys: &str) -> Vec<String> {
+    if matches!(command, "cref" | "Cref") {
+        split_comma_list(keys)
+    } else {
+        let key = keys.trim();
+        if key.is_empty() {
+            Vec::new()
+        } else {
+            vec![key.to_string()]
+        }
+    }
+}
+
+fn append_missing(target: &mut Vec<String>, source: &[String]) {
+    for item in source {
+        if !target.contains(item) {
+            target.push(item.clone());
+        }
+    }
+}
+
 fn finish_env(env: ActiveEnv, result: &mut ScanResult) {
     if let Some(kind) = env.kind {
         result.floats.push(FloatEnv {
@@ -391,6 +501,70 @@ fn attach_caption(stack: &mut [ActiveEnv], caption: Caption) {
 fn attach_graphic(stack: &mut [ActiveEnv], graphic: Graphic) {
     if let Some(env) = stack.iter_mut().rev().find(|env| env.kind.is_some()) {
         env.graphics.push(graphic);
+    }
+}
+
+fn push_label(
+    key: String,
+    location: SourceLocation,
+    stack: &mut [ActiveEnv],
+    result: &mut ScanResult,
+) {
+    let label = Label {
+        key,
+        kind: LabelKind::from(current_float_kind(stack)),
+        location,
+    };
+    attach_label(stack, label.clone());
+    result.labels.push(label);
+}
+
+fn collect_begin_option_labels(
+    content: &str,
+    env_name: &str,
+    start: usize,
+    location: &SourceLocation,
+    stack: &mut [ActiveEnv],
+    result: &mut ScanResult,
+) -> Option<usize> {
+    if env_name != "lstlisting" {
+        return None;
+    }
+
+    let (options, end) = parse_optional_arg_values(content, start);
+    for option in options {
+        if let Some(key) = listing_label_option(&option) {
+            push_label(key, location.clone(), stack, result);
+        }
+    }
+
+    Some(end)
+}
+
+fn listing_label_option(option: &str) -> Option<String> {
+    let (name, value) = option.split_once('=')?;
+    if name.trim() != "label" {
+        return None;
+    }
+
+    let key = trim_wrappers(value.trim());
+    (!key.is_empty()).then(|| key.to_string())
+}
+
+fn trim_wrappers(mut value: &str) -> &str {
+    loop {
+        let stripped = value
+            .strip_prefix('{')
+            .and_then(|inner| inner.strip_suffix('}'))
+            .or_else(|| {
+                value
+                    .strip_prefix('"')
+                    .and_then(|inner| inner.strip_suffix('"'))
+            });
+        let Some(stripped) = stripped else {
+            return value.trim();
+        };
+        value = stripped.trim();
     }
 }
 
@@ -423,7 +597,7 @@ fn collect_labels_in_range(
             continue;
         };
 
-        if command != "label" {
+        if !is_builtin_label_command(&command) {
             index = after_command.min(end);
             continue;
         }
@@ -438,13 +612,12 @@ fn collect_labels_in_range(
         }
 
         let (line, column) = line_column(line_starts, command_start);
-        let label = Label {
+        push_label(
             key,
-            kind: LabelKind::from(current_float_kind(stack)),
-            location: SourceLocation::new(file.to_path_buf(), line, column),
-        };
-        attach_label(stack, label.clone());
-        result.labels.push(label);
+            SourceLocation::new(file.to_path_buf(), line, column),
+            stack,
+            result,
+        );
         index = label_end;
     }
 }
@@ -495,9 +668,11 @@ fn label_macros(content: &str) -> Vec<LabelMacro> {
     let mut macros = Vec::new();
     let mut index = 0;
 
-    while let Some(relative_start) = content[index..].find("\\newcommand") {
+    while let Some((relative_start, definition_command)) =
+        next_label_definition_command(&content[index..])
+    {
         let command_start = index + relative_start;
-        let after_command = command_start + "\\newcommand".len();
+        let after_command = command_start + definition_command.len();
         if content[after_command..]
             .chars()
             .next()
@@ -532,6 +707,18 @@ fn label_macros(content: &str) -> Vec<LabelMacro> {
     }
 
     macros
+}
+
+fn next_label_definition_command(content: &str) -> Option<(usize, &'static str)> {
+    [
+        "\\newcommand",
+        "\\renewcommand",
+        "\\providecommand",
+        "\\DeclareRobustCommand",
+    ]
+    .into_iter()
+    .filter_map(|command| content.find(command).map(|index| (index, command)))
+    .min_by_key(|(index, _)| *index)
 }
 
 fn label_parameter_indices(body: &str) -> Vec<usize> {
@@ -689,6 +876,38 @@ fn parse_graphics_paths(raw_paths: &str) -> Vec<String> {
     }
 
     paths
+}
+
+fn normalize_graphic_path(path: &str) -> String {
+    let mut normalized = path.trim();
+
+    loop {
+        let stripped = normalized
+            .strip_prefix('{')
+            .and_then(|inner| inner.strip_suffix('}'))
+            .or_else(|| {
+                normalized
+                    .strip_prefix('"')
+                    .and_then(|inner| inner.strip_suffix('"'))
+            });
+        let Some(stripped) = stripped else {
+            break;
+        };
+        normalized = stripped.trim();
+    }
+
+    if let Some((stem, extension)) = split_grouped_graphic_extension(normalized) {
+        return format!("{stem}.{extension}");
+    }
+
+    normalized.to_string()
+}
+
+fn split_grouped_graphic_extension(path: &str) -> Option<(&str, &str)> {
+    let (stem, extension) = path.rsplit_once("}.")?;
+    stem.strip_prefix('{')
+        .filter(|stem| !stem.is_empty())
+        .zip(Some(extension))
 }
 
 fn parse_include_arg(content: &str, start: usize) -> Option<(String, usize)> {
@@ -864,6 +1083,47 @@ mod tests {
     }
 
     #[test]
+    fn normalizes_graphics_paths() {
+        let scan = scan_latex(
+            Path::new("paper.tex"),
+            "\\includegraphics{{figures/model}.pdf}\n\\includegraphics{\"figures/other.png\"}\n",
+        );
+
+        let paths: Vec<_> = scan
+            .graphics
+            .iter()
+            .map(|graphic| graphic.raw_path.as_str())
+            .collect();
+        assert_eq!(paths, vec!["figures/model.pdf", "figures/other.png"]);
+    }
+
+    #[test]
+    fn normal_refs_keep_comma_labels_intact() {
+        let scan = scan_latex(
+            Path::new("paper.tex"),
+            "\\label{G,H,K,T}\n\\ref{G,H,K,T}\n\\cref{sec:a,sec:b}\n",
+        );
+
+        let refs: Vec<_> = scan
+            .refs
+            .iter()
+            .map(|reference| reference.key.as_str())
+            .collect();
+        assert_eq!(refs, vec!["G,H,K,T", "sec:a", "sec:b"]);
+    }
+
+    #[test]
+    fn collects_builtin_label_macros_and_listing_option_labels() {
+        let scan = scan_latex(
+            Path::new("paper.tex"),
+            "\\lb{ex:one}\n\\alglinelabel{alg:line}\n\\begin{lstlisting}[caption={Code},label=listing:first]\nignored\n\\end{lstlisting}\n",
+        );
+
+        let labels: Vec<_> = scan.labels.iter().map(|label| label.key.as_str()).collect();
+        assert_eq!(labels, vec!["ex:one", "alg:line", "listing:first"]);
+    }
+
+    #[test]
     fn collects_algorithm_contents() {
         let scan = scan_latex(
             Path::new("paper.tex"),
@@ -947,6 +1207,23 @@ mod tests {
             .map(|include| include.raw_path.as_str())
             .collect();
         assert_eq!(paths, vec!["sections/method", "sections/results"]);
+    }
+
+    #[test]
+    fn records_bibliography_declarations() {
+        let scan = scan_latex(
+            Path::new("paper.tex"),
+            "\\bibliography{refs,more}\n\\addbibresource{bib/extra.bib}\n",
+        );
+
+        let paths: Vec<_> = scan
+            .bibliographies
+            .iter()
+            .map(|bibliography| bibliography.raw_path.as_str())
+            .collect();
+        assert_eq!(paths, vec!["refs", "more", "bib/extra.bib"]);
+        assert_eq!(scan.bibliographies[0].command, "bibliography");
+        assert_eq!(scan.bibliographies[2].command, "addbibresource");
     }
 
     #[test]

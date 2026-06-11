@@ -17,6 +17,7 @@ impl ProjectRule for MissingCaption {
         project
             .floats
             .iter()
+            .filter(|float| !is_subfloat(&float.env_name))
             .filter(|float| float.captions.is_empty())
             .map(|float| {
                 Diagnostic::new(
@@ -31,4 +32,8 @@ impl ProjectRule for MissingCaption {
             })
             .collect()
     }
+}
+
+fn is_subfloat(env_name: &str) -> bool {
+    matches!(env_name, "subfigure" | "subtable")
 }

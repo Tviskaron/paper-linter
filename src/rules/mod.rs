@@ -182,7 +182,7 @@ pub struct RuleInfo {
     pub fix: &'static str,
 }
 
-static RULE_INFOS: [RuleInfo; 53] = [
+static RULE_INFOS: [RuleInfo; 54] = [
     RuleInfo {
         code: "ALG001",
         name: "orphan algorithm",
@@ -195,7 +195,7 @@ static RULE_INFOS: [RuleInfo; 53] = [
         code: "CMT001",
         name: "editorial comment",
         default_severity: Severity::Warning,
-        summary: "A LaTeX comment contains editorial markers such as TODO, FIXME, or REVIEW.",
+        summary: "A LaTeX comment contains editorial markers such as TODO, FIXME, XXX, or TBD.",
         why: "Editorial comments are easy to miss during review and should not appear in submitted papers.",
         fix: "Resolve the note or remove the comment before submission.",
     },
@@ -222,6 +222,14 @@ static RULE_INFOS: [RuleInfo; 53] = [
         summary: "A bibliography entry has a malformed DOI, URL, or arXiv identifier.",
         why: "Malformed bibliography identifiers break publisher metadata, links, and citation exports.",
         fix: "Fix the DOI, URL, or arXiv identifier syntax in the .bib entry.",
+    },
+    RuleInfo {
+        code: "BIB002",
+        name: "bibliography private metadata",
+        default_severity: Severity::Warning,
+        summary: "A bibliography entry contains local-only file metadata.",
+        why: "Private bibliography file paths can leak local machine paths and reduce project portability.",
+        fix: "Remove local-only fields such as file before submission.",
     },
     RuleInfo {
         code: "CIT001",
@@ -680,13 +688,13 @@ mod tests {
         assert_eq!(
             codes,
             vec![
-                "ALG001", "CMT001", "CAP001", "CAP002", "BIB001", "CIT001", "CIT002", "CIT003",
-                "CIT004", "CIT005", "CIT006", "CIT007", "CIT008", "CIT009", "CIT010", "CIT011",
-                "ENV001", "FIG001", "FIG002", "FIG003", "FIG004", "FIG005", "FIG006", "FIG007",
-                "FMT001", "FMT002", "LBL001", "LAT001", "LAT002", "MTH001", "MTH002", "MTH003",
-                "PRJ001", "PRJ002", "PRJ003", "PRJ004", "REF001", "SEC001", "SEC002", "SEC003",
-                "SEC004", "SEC005", "SEC006", "TAB001", "TAB002", "TEX001", "TEX002", "TXT001",
-                "TXT002", "TXT003", "TXT004", "TXT005", "WS001"
+                "ALG001", "CMT001", "CAP001", "CAP002", "BIB001", "BIB002", "CIT001", "CIT002",
+                "CIT003", "CIT004", "CIT005", "CIT006", "CIT007", "CIT008", "CIT009", "CIT010",
+                "CIT011", "ENV001", "FIG001", "FIG002", "FIG003", "FIG004", "FIG005", "FIG006",
+                "FIG007", "FMT001", "FMT002", "LBL001", "LAT001", "LAT002", "MTH001", "MTH002",
+                "MTH003", "PRJ001", "PRJ002", "PRJ003", "PRJ004", "REF001", "SEC001", "SEC002",
+                "SEC003", "SEC004", "SEC005", "SEC006", "TAB001", "TAB002", "TEX001", "TEX002",
+                "TXT001", "TXT002", "TXT003", "TXT004", "TXT005", "WS001"
             ]
         );
     }

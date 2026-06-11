@@ -4,6 +4,7 @@ use std::io;
 use std::path::{Path, PathBuf};
 
 use crate::diagnostic::{Diagnostic, Severity};
+use crate::latex::scan::ScanAliases;
 
 mod bbl;
 mod bibtex;
@@ -81,6 +82,8 @@ struct BibSource {
 pub fn check_project(
     tex_files: &[SourceFile],
     explicit_bib_files: &[PathBuf],
+    aliases: &ScanAliases,
+    forbidden_bibliography_fields: &[String],
 ) -> Result<Vec<Diagnostic>, io::Error> {
     let mut citations = Vec::new();
     let mut declarations = Vec::new();
@@ -89,7 +92,7 @@ pub fn check_project(
     let mut source_bibitem_keys = HashSet::new();
 
     for file in tex_files {
-        citations.extend(find_citations(&file.path, &file.content));
+        citations.extend(find_citations(&file.path, &file.content, aliases));
         declarations.extend(find_bibliographies(&file.path, &file.content));
         bbl_inputs.extend(find_bbl_inputs(&file.path, &file.content));
         has_bibunits |= uses_bibunits(&file.content);
@@ -288,6 +291,10 @@ pub fn check_project(
     }
 
     diagnostics.extend(find_invalid_bibliography_metadata(&scoped_entries));
+    diagnostics.extend(find_bibliography_style_policy(
+        &scoped_entries,
+        forbidden_bibliography_fields,
+    ));
     diagnostics.extend(find_duplicate_keys(&scoped_entries));
     diagnostics.extend(find_similar_titles(&scoped_entries));
     diagnostics.extend(find_non_canonical_bibliography_keys(&scoped_entries));
@@ -555,6 +562,10 @@ fn find_invalid_bibliography_metadata(entries: &[&BibEntry]) -> Vec<Diagnostic> 
                     "bibliography entry '{}' has invalid URL '{}'",
                     entry.key, normalized
                 )),
+                "isbn" if !is_valid_isbn(&normalized) => Some(format!(
+                    "bibliography entry '{}' has invalid ISBN '{}'",
+                    entry.key, normalized
+                )),
                 "eprint" if entry_has_arxiv_prefix(entry) && !is_valid_arxiv_id(&normalized) => {
                     Some(format!(
                         "bibliography entry '{}' has invalid arXiv id '{}'",
@@ -581,6 +592,45 @@ fn find_invalid_bibliography_metadata(entries: &[&BibEntry]) -> Vec<Diagnostic> 
     }
 
     diagnostics
+}
+
+fn find_bibliography_style_policy(
+    entries: &[&BibEntry],
+    configured_forbidden_fields: &[String],
+) -> Vec<Diagnostic> {
+    let mut diagnostics = Vec::new();
+
+    for &entry in entries {
+        for field in entry.fields.keys() {
+            if !is_forbidden_bibliography_field(field, configured_forbidden_fields) {
+                continue;
+            }
+
+            diagnostics.push(
+                Diagnostic::new(
+                    "BIB002",
+                    Severity::Warning,
+                    format!(
+                        "bibliography entry '{}' contains private field '{}'",
+                        entry.key, field
+                    ),
+                    &entry.file,
+                    entry.line,
+                    entry.column,
+                )
+                .with_hint("remove local-only bibliography fields before submission"),
+            );
+        }
+    }
+
+    diagnostics
+}
+
+fn is_forbidden_bibliography_field(field: &str, configured_forbidden_fields: &[String]) -> bool {
+    matches!(field, "file")
+        || configured_forbidden_fields
+            .iter()
+            .any(|candidate| candidate == field)
 }
 
 fn normalize_braced_value(value: &str) -> String {
@@ -620,6 +670,51 @@ fn is_valid_url(value: &str) -> bool {
     matches!(scheme, "http" | "https" | "ftp" | "mailto")
         && !rest.is_empty()
         && !value.chars().any(char::is_whitespace)
+}
+
+fn is_valid_isbn(value: &str) -> bool {
+    let normalized: String = value
+        .chars()
+        .filter(|character| !matches!(character, '-' | ' '))
+        .collect();
+
+    match normalized.len() {
+        10 => is_valid_isbn10(&normalized),
+        13 => is_valid_isbn13(&normalized),
+        _ => false,
+    }
+}
+
+fn is_valid_isbn10(value: &str) -> bool {
+    let mut sum = 0u32;
+
+    for (index, character) in value.chars().enumerate() {
+        let digit = match character {
+            '0'..='9' => character.to_digit(10).expect("digit matched above"),
+            'X' | 'x' if index == 9 => 10,
+            _ => return false,
+        };
+        sum += (10 - index as u32) * digit;
+    }
+
+    sum.is_multiple_of(11)
+}
+
+fn is_valid_isbn13(value: &str) -> bool {
+    if !value.starts_with("978") && !value.starts_with("979") {
+        return false;
+    }
+
+    let mut sum = 0u32;
+    for (index, character) in value.chars().enumerate() {
+        let Some(digit) = character.to_digit(10) else {
+            return false;
+        };
+        let weight = if index % 2 == 0 { 1 } else { 3 };
+        sum += weight * digit;
+    }
+
+    sum.is_multiple_of(10)
 }
 
 fn entry_has_arxiv_prefix(entry: &BibEntry) -> bool {
@@ -1341,8 +1436,9 @@ mod tests {
     use super::{
         bibtex::parse_bib_entries, canonical_bibliography_key, find_duplicate_keys,
         find_non_canonical_bibliography_keys, is_citation_punctuation_exception, is_valid_arxiv_id,
-        is_valid_doi, is_valid_url, missing_required_fields, scoped_bibliography_entries,
-        should_skip_resolved_large_bib, BibSource, LARGE_BIB_FAST_PATH_BYTES,
+        is_valid_doi, is_valid_isbn, is_valid_url, missing_required_fields,
+        scoped_bibliography_entries, should_skip_resolved_large_bib, BibSource,
+        LARGE_BIB_FAST_PATH_BYTES,
     };
 
     #[test]
@@ -1536,6 +1632,10 @@ mod tests {
         assert!(is_valid_url("https://example.com/paper"));
         assert!(is_valid_url("mailto:author@example.com"));
         assert!(!is_valid_url("example dot com"));
+
+        assert!(is_valid_isbn("0-306-40615-2"));
+        assert!(is_valid_isbn("978-0-306-40615-7"));
+        assert!(!is_valid_isbn("978-0-306-40615-8"));
 
         assert!(is_valid_arxiv_id("2401.00001v2"));
         assert!(is_valid_arxiv_id("hep-th/9901001"));

@@ -6,12 +6,13 @@ use std::path::{Path, PathBuf};
 use serde::{Deserialize, Serialize};
 
 use crate::latex::scan::{
-    scan_latex, DocumentClass, FloatEnv, Graphic, GraphicsPath, Include, Label, PackageImport, Ref,
+    scan_latex_with_aliases, BibliographyDecl, DocumentClass, FloatEnv, Graphic, GraphicsPath,
+    Include, Label, PackageImport, Ref, ScanAliases, SourceLocation,
 };
 use crate::latex::significant::{mask_discarded_macro_arguments, mask_inactive_regions};
 
 const GRAPHICS_EXTENSIONS: [&str; 6] = ["pdf", "png", "jpg", "jpeg", "eps", "svg"];
-const PROJECT_INDEX_VERSION: u32 = 1;
+const PROJECT_INDEX_VERSION: u32 = 2;
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct SourceFile {
@@ -27,6 +28,7 @@ pub struct ProjectIndex {
     pub refs: Vec<Ref>,
     pub graphics: Vec<Graphic>,
     pub graphics_paths: Vec<GraphicsPath>,
+    pub bibliographies: Vec<BibliographyDecl>,
     pub document_classes: Vec<DocumentClass>,
     pub packages: Vec<PackageImport>,
     pub floats: Vec<FloatEnv>,
@@ -34,9 +36,18 @@ pub struct ProjectIndex {
 
 impl ProjectIndex {
     pub fn build(input_paths: &[PathBuf], discovered_files: &[PathBuf]) -> io::Result<Self> {
+        Self::build_with_aliases(input_paths, discovered_files, &ScanAliases::default())
+    }
+
+    pub fn build_with_aliases(
+        input_paths: &[PathBuf],
+        discovered_files: &[PathBuf],
+        aliases: &ScanAliases,
+    ) -> io::Result<Self> {
         let root = infer_project_root(input_paths, discovered_files)?;
         let mut builder = ProjectBuilder {
             root,
+            aliases: aliases.clone(),
             seen: BTreeSet::new(),
             document_ended: BTreeMap::new(),
             files: Vec::new(),
@@ -44,6 +55,7 @@ impl ProjectIndex {
             refs: Vec::new(),
             graphics: Vec::new(),
             graphics_paths: Vec::new(),
+            bibliographies: Vec::new(),
             document_classes: Vec::new(),
             packages: Vec::new(),
             floats: Vec::new(),
@@ -93,6 +105,17 @@ impl ProjectIndex {
         self.labels.iter().any(|label| label.key == key)
     }
 
+    pub fn uses_package(&self, name: &str) -> bool {
+        self.packages.iter().any(|package| package.name == name)
+    }
+
+    pub fn is_after_appendix(&self, location: &SourceLocation) -> bool {
+        self.files
+            .iter()
+            .find(|file| file.path == location.file)
+            .is_some_and(|file| command_line_before_or_at(&file.content, "appendix", location.line))
+    }
+
     pub fn resolve_graphic(&self, graphic: &Graphic) -> Option<PathBuf> {
         resolve_graphic_path(
             &self.root,
@@ -123,8 +146,42 @@ fn json_io_error(error: serde_json::Error) -> io::Error {
     io::Error::new(io::ErrorKind::InvalidData, error)
 }
 
+fn command_line_before_or_at(content: &str, command: &str, target_line: usize) -> bool {
+    let needle = format!("\\{command}");
+    content
+        .lines()
+        .take(target_line)
+        .any(|line| uncommented_line(line).contains(&needle))
+}
+
+fn uncommented_line(line: &str) -> &str {
+    let mut escaped = false;
+
+    for (index, character) in line.char_indices() {
+        if character == '%' && !escaped {
+            return &line[..index];
+        }
+
+        escaped = character == '\\' && !escaped;
+        if character != '\\' {
+            escaped = false;
+        }
+    }
+
+    line
+}
+
+fn scan_latex_with_project_aliases(
+    file: impl Into<PathBuf>,
+    content: &str,
+    aliases: &ScanAliases,
+) -> crate::latex::scan::ScanResult {
+    scan_latex_with_aliases(file, content, aliases)
+}
+
 struct ProjectBuilder {
     root: PathBuf,
+    aliases: ScanAliases,
     seen: BTreeSet<PathBuf>,
     document_ended: BTreeMap<PathBuf, bool>,
     files: Vec<SourceFile>,
@@ -132,6 +189,7 @@ struct ProjectBuilder {
     refs: Vec<Ref>,
     graphics: Vec<Graphic>,
     graphics_paths: Vec<GraphicsPath>,
+    bibliographies: Vec<BibliographyDecl>,
     document_classes: Vec<DocumentClass>,
     packages: Vec<PackageImport>,
     floats: Vec<FloatEnv>,
@@ -154,7 +212,7 @@ impl ProjectBuilder {
         let content = fs::read_to_string(&canonical)?;
         let content = mask_discarded_macro_arguments(&content);
         let content = mask_inactive_regions(&content);
-        let scan = scan_latex(canonical.clone(), &content);
+        let scan = scan_latex_with_project_aliases(canonical.clone(), &content, &self.aliases);
         let includes = scan.includes.clone();
         let mut truncation_line = scan.document_end.as_ref().map(|location| location.line);
 
@@ -180,12 +238,13 @@ impl ProjectBuilder {
         let content = truncation_line
             .map(|line| truncate_after_line(&content, line))
             .unwrap_or(content);
-        let scan = scan_latex(canonical.clone(), &content);
+        let scan = scan_latex_with_project_aliases(canonical.clone(), &content, &self.aliases);
 
         self.labels.extend(scan.labels);
         self.refs.extend(scan.refs);
         self.graphics.extend(scan.graphics);
         self.graphics_paths.extend(scan.graphics_paths);
+        self.bibliographies.extend(scan.bibliographies);
         self.document_classes.extend(scan.document_classes);
         self.packages.extend(scan.packages);
         self.floats.extend(scan.floats);
@@ -210,6 +269,8 @@ impl ProjectBuilder {
             .sort_by(|left, right| left.location.file.cmp(&right.location.file));
         self.graphics_paths
             .sort_by(|left, right| left.location.file.cmp(&right.location.file));
+        self.bibliographies
+            .sort_by(|left, right| left.location.file.cmp(&right.location.file));
         self.document_classes
             .sort_by(|left, right| left.location.file.cmp(&right.location.file));
         self.packages
@@ -224,6 +285,7 @@ impl ProjectBuilder {
             refs: self.refs,
             graphics: self.graphics,
             graphics_paths: self.graphics_paths,
+            bibliographies: self.bibliographies,
             document_classes: self.document_classes,
             packages: self.packages,
             floats: self.floats,
@@ -548,6 +610,21 @@ mod tests {
             .expect("project should index");
 
         assert_eq!(index.files.len(), 3);
+        assert!(index.labels.iter().any(|label| label.key == "sec:method"));
+    }
+
+    #[test]
+    fn follows_subfile_inputs() {
+        let dir = temp_project("subfile-input");
+        let main = dir.join("paper.tex");
+        let section = dir.join("sections/method.tex");
+        write(&main, "\\subfile{sections/method}\n");
+        write(&section, "\\label{sec:method}\n");
+
+        let index = ProjectIndex::build(std::slice::from_ref(&main), std::slice::from_ref(&main))
+            .expect("project should index");
+
+        assert_eq!(index.files.len(), 2);
         assert!(index.labels.iter().any(|label| label.key == "sec:method"));
     }
 

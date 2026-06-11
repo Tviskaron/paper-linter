@@ -64,6 +64,9 @@ fn hard_coded_references(line: &str) -> Vec<HardCodedReference<'_>> {
         if kind.is_none() || !is_reference_number(pair[1].text) {
             continue;
         }
+        if is_external_reference_context(line, &words, pair[0].column) {
+            continue;
+        }
 
         references.push(HardCodedReference {
             kind: kind.expect("checked above"),
@@ -73,6 +76,105 @@ fn hard_coded_references(line: &str) -> Vec<HardCodedReference<'_>> {
     }
 
     references
+}
+
+fn is_external_reference_context(line: &str, words: &[IndexedWord<'_>], column: usize) -> bool {
+    let Some(index) = words.iter().position(|word| word.column == column) else {
+        return false;
+    };
+
+    is_inside_citation_optional_arg(line, column)
+        || followed_by_citation_locator(line, words, index)
+        || followed_by_external_phrase(words, index)
+}
+
+fn is_inside_citation_optional_arg(line: &str, column: usize) -> bool {
+    let byte_index = column_to_byte(line, column);
+    let prefix = &line[..byte_index.min(line.len())];
+    let Some(bracket_start) = prefix.rfind('[') else {
+        return false;
+    };
+    let after_bracket = &line[bracket_start + 1..byte_index.min(line.len())];
+    if after_bracket.contains(']') {
+        return false;
+    }
+
+    let command_prefix = &line[..bracket_start];
+    if let Some(command_start) = command_prefix.rfind('\\') {
+        let command = command_prefix[command_start + 1..].trim_end();
+        return is_citation_command(command);
+    }
+
+    command_prefix
+        .split(|character: char| !character.is_ascii_alphabetic())
+        .rev()
+        .find(|word| !word.is_empty())
+        .is_some_and(is_citation_command)
+}
+
+fn followed_by_citation_locator(line: &str, words: &[IndexedWord<'_>], index: usize) -> bool {
+    let Some(preposition) = words
+        .get(index + 2)
+        .map(|word| word.text.to_ascii_lowercase())
+    else {
+        return false;
+    };
+    if !matches!(preposition.as_str(), "of" | "in" | "from") {
+        return false;
+    }
+
+    let Some(next) = words.get(index + 3).map(|word| word.text) else {
+        return false;
+    };
+    if is_citation_command(next) {
+        return true;
+    }
+
+    let start_column = words[index + 2].column;
+    let byte_start = column_to_byte(line, start_column);
+    line[byte_start..].contains("\\cite")
+}
+
+fn followed_by_external_phrase(words: &[IndexedWord<'_>], index: usize) -> bool {
+    let Some(preposition) = words
+        .get(index + 2)
+        .map(|word| word.text.to_ascii_lowercase())
+    else {
+        return false;
+    };
+    if !matches!(preposition.as_str(), "of" | "in" | "from") {
+        return false;
+    }
+
+    let Some(next) = words.get(index + 3).map(|word| word.text) else {
+        return false;
+    };
+    if next.eq_ignore_ascii_case("their") {
+        return true;
+    }
+    next.chars().next().is_some_and(char::is_uppercase)
+}
+
+fn is_citation_command(command: &str) -> bool {
+    matches!(
+        command,
+        "cite"
+            | "citep"
+            | "citet"
+            | "citealp"
+            | "parencite"
+            | "textcite"
+            | "Cite"
+            | "Citep"
+            | "Citet"
+    )
+}
+
+fn column_to_byte(line: &str, column: usize) -> usize {
+    line.char_indices()
+        .nth(column.saturating_sub(1))
+        .map(|(index, _)| index)
+        .unwrap_or(line.len())
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -183,6 +285,14 @@ mod tests {
     fn ignores_comments_math_and_command_lines() {
         let content =
             "% Figure 3\nThe value $Figure 3$ is literal.\n\\caption{Figure 3 shows it}\n";
+        let diagnostics = HardCodedReferenceNumber.check_file(Path::new("paper.tex"), content);
+
+        assert!(diagnostics.is_empty());
+    }
+
+    #[test]
+    fn ignores_external_citation_locators() {
+        let content = "\\citep[Fig. 2]{paper}\nFigure 3 of \\citep{paper} is related.\nTable 1 in their paper is similar.\nTable 7 of IBMD is external.\n";
         let diagnostics = HardCodedReferenceNumber.check_file(Path::new("paper.tex"), content);
 
         assert!(diagnostics.is_empty());

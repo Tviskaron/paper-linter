@@ -163,6 +163,17 @@ fn inactive_spans(content: &str) -> Vec<InactiveSpan> {
             }
         }
 
+        if command == "iffalse" {
+            let end = conditional_false_end(content, after_command);
+            spans.push(InactiveSpan {
+                start: index,
+                end,
+                reason: InactiveReason::OpaqueEnvironment,
+            });
+            index = end;
+            continue;
+        }
+
         if command == "excludecomment" {
             if let Some((arg_start, end)) = read_required_group_range(content, after_command) {
                 let env_name = content[arg_start + 1..end - 1].trim();
@@ -182,9 +193,14 @@ fn inactive_spans(content: &str) -> Vec<InactiveSpan> {
             };
             let env_name = content[arg_start + 1..after_env - 1].trim();
             if opaque_environments.contains(env_name) {
+                let span_start = if env_name == "lstlisting" {
+                    skip_optional_groups(content, after_env)
+                } else {
+                    index
+                };
                 let end = opaque_environment_end(content, env_name, after_env);
                 spans.push(InactiveSpan {
-                    start: index,
+                    start: span_start,
                     end,
                     reason: InactiveReason::OpaqueEnvironment,
                 });
@@ -209,6 +225,33 @@ fn opaque_environment_end(content: &str, env_name: &str, start: usize) -> usize 
             return candidate + needle.len();
         }
         index = candidate + 1;
+    }
+
+    content.len()
+}
+
+fn conditional_false_end(content: &str, start: usize) -> usize {
+    let mut index = start;
+    let mut depth = 1usize;
+
+    while let Some(relative) = content[index..].find('\\') {
+        let command_start = index + relative;
+        let Some((command, after_command)) = read_command_name(content, command_start) else {
+            index = command_start + 1;
+            continue;
+        };
+
+        match command {
+            "iffalse" => depth += 1,
+            "fi" => {
+                depth -= 1;
+                if depth == 0 {
+                    return after_command;
+                }
+            }
+            _ => {}
+        }
+        index = after_command;
     }
 
     content.len()
@@ -324,6 +367,14 @@ fn read_optional_group(content: &str, offset: usize) -> Option<(&str, usize)> {
 
     let end = balanced_group_end(content, start, b'[', b']')?;
     Some((&content[start + 1..end], end + 1))
+}
+
+fn skip_optional_groups(content: &str, offset: usize) -> usize {
+    let mut index = offset;
+    while let Some((_, end)) = read_optional_group(content, index) {
+        index = end;
+    }
+    index
 }
 
 fn balanced_group_end(content: &str, start: usize, open: u8, close: u8) -> Option<usize> {

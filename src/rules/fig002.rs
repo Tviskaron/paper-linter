@@ -20,6 +20,7 @@ impl ProjectRule for OrphanFigure {
             .iter()
             .filter(|float| float.kind == FloatKind::Figure)
             .flat_map(|float| float.labels.iter())
+            .filter(|label| !project.is_after_appendix(&label.location))
             .filter(|label| !project.is_referenced(&label.key))
             .map(|label| {
                 Diagnostic::new(

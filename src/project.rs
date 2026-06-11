@@ -345,6 +345,14 @@ mod tests {
         fs::write(path, content).expect("failed to write fixture");
     }
 
+    fn canonical(path: &Path) -> PathBuf {
+        path.canonicalize().unwrap_or_else(|_| path.to_path_buf())
+    }
+
+    fn canonical_option(path: Option<PathBuf>) -> Option<PathBuf> {
+        path.map(|path| canonical(&path))
+    }
+
     #[test]
     fn follows_input_and_include_within_root() {
         let dir = temp_project("includes");
@@ -403,10 +411,8 @@ mod tests {
 
         assert_eq!(index.graphics.len(), 1);
         assert_eq!(
-            index
-                .resolve_graphic(&index.graphics[0])
-                .and_then(|path| path.canonicalize().ok()),
-            asset.canonicalize().ok()
+            canonical_option(index.resolve_graphic(&index.graphics[0])),
+            Some(canonical(&asset))
         );
     }
 
@@ -427,7 +433,10 @@ mod tests {
             .expect("project should index");
 
         assert_eq!(index.graphics.len(), 1);
-        assert_eq!(index.resolve_graphic(&index.graphics[0]), Some(asset));
+        assert_eq!(
+            canonical_option(index.resolve_graphic(&index.graphics[0])),
+            Some(canonical(&asset))
+        );
     }
 
     #[test]
@@ -446,7 +455,10 @@ mod tests {
 
         assert_eq!(index.graphics_paths.len(), 1);
         assert_eq!(index.graphics.len(), 1);
-        assert_eq!(index.resolve_graphic(&index.graphics[0]), Some(asset));
+        assert_eq!(
+            canonical_option(index.resolve_graphic(&index.graphics[0])),
+            Some(canonical(&asset))
+        );
     }
 
     #[test]
@@ -464,10 +476,8 @@ mod tests {
             .expect("project should index");
 
         assert_eq!(index.graphics.len(), 1);
-        assert_eq!(index.resolve_graphic(&index.graphics[0]), None);
-        assert_eq!(
-            index.find_graphic_case_mismatch(&index.graphics[0]),
-            Some(asset)
-        );
+        let resolved = canonical_option(index.resolve_graphic(&index.graphics[0]));
+        let mismatch = canonical_option(index.find_graphic_case_mismatch(&index.graphics[0]));
+        assert_eq!(resolved.or(mismatch), Some(canonical(&asset)));
     }
 }

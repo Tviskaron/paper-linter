@@ -366,6 +366,10 @@ mod tests {
         fs::write(path, content).expect("failed to write fixture");
     }
 
+    fn canonical(path: &Path) -> PathBuf {
+        path.canonicalize().unwrap_or_else(|_| path.to_path_buf())
+    }
+
     #[test]
     fn finds_tex_root_magic_comments() {
         assert_eq!(
@@ -396,8 +400,11 @@ mod tests {
         write(&section, "%! TeX root = ../main.tex\n");
 
         assert_eq!(
-            magic_root_path(&section).expect("root should parse"),
-            Some(root)
+            magic_root_path(&section)
+                .expect("root should parse")
+                .as_deref()
+                .map(canonical),
+            Some(canonical(&root))
         );
     }
 }

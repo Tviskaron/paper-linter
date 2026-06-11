@@ -16,6 +16,7 @@ mod lat002;
 mod lbl001;
 mod mth001;
 mod mth002;
+mod mth003;
 mod prj001;
 mod prj002;
 mod prj003;
@@ -81,6 +82,7 @@ static SEC005_RULE: sec005::ShortSection = sec005::ShortSection;
 static SEC006_RULE: sec006::HeadingStyle = sec006::HeadingStyle;
 static MTH001_RULE: mth001::DoubleDollarDisplayMath = mth001::DoubleDollarDisplayMath;
 static MTH002_RULE: mth002::UnbracedMathScript = mth002::UnbracedMathScript;
+static MTH003_RULE: mth003::TextOperatorInMath = mth003::TextOperatorInMath;
 static LAT002_RULE: lat002::PrimitiveTex = lat002::PrimitiveTex;
 static TEX001_RULE: tex001::MissingNonBreakingSpace = tex001::MissingNonBreakingSpace;
 static TEX002_RULE: tex002::HardCodedReferenceNumber = tex002::HardCodedReferenceNumber;
@@ -91,7 +93,7 @@ static TXT004_RULE: txt004::FillerWords = txt004::FillerWords;
 static TXT005_RULE: txt005::PassiveVoice = txt005::PassiveVoice;
 static CMT001_RULE: cmt001::EditorialComment = cmt001::EditorialComment;
 static WS001_RULE: ws001::TrailingWhitespace = ws001::TrailingWhitespace;
-static RULES: [&dyn Rule; 21] = [
+static RULES: [&dyn Rule; 22] = [
     &ENV001_RULE,
     &FMT001_RULE,
     &FMT002_RULE,
@@ -103,6 +105,7 @@ static RULES: [&dyn Rule; 21] = [
     &SEC006_RULE,
     &MTH001_RULE,
     &MTH002_RULE,
+    &MTH003_RULE,
     &LAT002_RULE,
     &TEX001_RULE,
     &TEX002_RULE,
@@ -173,7 +176,7 @@ pub struct RuleInfo {
     pub fix: &'static str,
 }
 
-static RULE_INFOS: [RuleInfo; 49] = [
+static RULE_INFOS: [RuleInfo; 50] = [
     RuleInfo {
         code: "CMT001",
         name: "editorial comment",
@@ -399,6 +402,14 @@ static RULE_INFOS: [RuleInfo; 49] = [
         fix: "Wrap the script in braces, for example x^{10} or a_{ij}.",
     },
     RuleInfo {
+        code: "MTH003",
+        name: "text operator in math",
+        default_severity: Severity::Warning,
+        summary: "A common math operator is written as raw text inside math mode.",
+        why: "LaTeX operator commands such as \\sin and \\log give correct spacing and typography.",
+        fix: "Use the corresponding LaTeX command, for example \\sin, \\log, or \\max.",
+    },
+    RuleInfo {
         code: "PRJ001",
         name: "missing include",
         default_severity: Severity::Error,
@@ -592,8 +603,8 @@ mod tests {
             codes,
             vec![
                 "ENV001", "FMT001", "FMT002", "SEC001", "SEC002", "SEC003", "SEC004", "SEC005",
-                "SEC006", "MTH001", "MTH002", "LAT002", "TEX001", "TEX002", "TXT001", "TXT002",
-                "TXT003", "TXT004", "TXT005", "CMT001", "WS001"
+                "SEC006", "MTH001", "MTH002", "MTH003", "LAT002", "TEX001", "TEX002", "TXT001",
+                "TXT002", "TXT003", "TXT004", "TXT005", "CMT001", "WS001"
             ]
         );
     }
@@ -642,10 +653,10 @@ mod tests {
                 "CMT001", "CAP001", "CAP002", "BIB001", "CIT001", "CIT002", "CIT003", "CIT004",
                 "CIT005", "CIT006", "CIT007", "CIT008", "CIT009", "CIT010", "ENV001", "FIG001",
                 "FIG002", "FIG003", "FIG004", "FIG005", "FIG006", "FMT001", "FMT002", "LBL001",
-                "LAT001", "LAT002", "MTH001", "MTH002", "PRJ001", "PRJ002", "PRJ003", "PRJ004",
-                "REF001", "SEC001", "SEC002", "SEC003", "SEC004", "SEC005", "SEC006", "TAB001",
-                "TAB002", "TEX001", "TEX002", "TXT001", "TXT002", "TXT003", "TXT004", "TXT005",
-                "WS001"
+                "LAT001", "LAT002", "MTH001", "MTH002", "MTH003", "PRJ001", "PRJ002", "PRJ003",
+                "PRJ004", "REF001", "SEC001", "SEC002", "SEC003", "SEC004", "SEC005", "SEC006",
+                "TAB001", "TAB002", "TEX001", "TEX002", "TXT001", "TXT002", "TXT003", "TXT004",
+                "TXT005", "WS001"
             ]
         );
     }

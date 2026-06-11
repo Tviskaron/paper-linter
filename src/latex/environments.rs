@@ -141,29 +141,75 @@ fn command_start(line: &str, command: &str) -> Option<usize> {
 }
 
 fn simple_definition_end(line: &str, index: usize, command: &str) -> Option<usize> {
-    if !is_simple_definition_command(command) {
-        return None;
+    if is_tex_definition_command(command) {
+        let body_start = line[index + command.len()..].find('{')? + index + command.len();
+        return matching_closing_brace(line, body_start);
     }
 
-    let body_start = line[index + command.len()..].find('{')? + index + command.len();
-    matching_closing_brace(line, body_start)
+    if is_command_definition_command(command) {
+        return command_definition_end(line, index, command);
+    }
+
+    None
+}
+
+fn command_definition_end(line: &str, index: usize, command: &str) -> Option<usize> {
+    let mut cursor = index + command.len();
+    cursor = required_arg_end(line, cursor)?;
+
+    loop {
+        let next = skip_ws(line, cursor);
+        if !line[next..].starts_with('[') {
+            cursor = next;
+            break;
+        }
+        cursor = matching_delimiter(line, next, '[', ']')?;
+    }
+
+    required_arg_end(line, cursor)
+}
+
+fn required_arg_end(line: &str, index: usize) -> Option<usize> {
+    let open = skip_ws(line, index);
+    if !line[open..].starts_with('{') {
+        return None;
+    }
+    matching_closing_brace(line, open)
+}
+
+fn skip_ws(line: &str, mut index: usize) -> usize {
+    while line
+        .as_bytes()
+        .get(index)
+        .is_some_and(|byte| byte.is_ascii_whitespace())
+    {
+        index += 1;
+    }
+    index
 }
 
 fn matching_closing_brace(line: &str, opening_brace: usize) -> Option<usize> {
+    matching_delimiter(line, opening_brace, '{', '}')
+}
+
+fn matching_delimiter(
+    line: &str,
+    opening_delimiter: usize,
+    open: char,
+    close: char,
+) -> Option<usize> {
     let mut depth = 0i32;
     let mut escaped = false;
 
-    for (index, ch) in line[opening_brace..].char_indices() {
+    for (index, ch) in line[opening_delimiter..].char_indices() {
         if !escaped {
-            match ch {
-                '{' => depth += 1,
-                '}' => {
-                    depth -= 1;
-                    if depth == 0 {
-                        return Some(opening_brace + index + ch.len_utf8());
-                    }
+            if ch == open {
+                depth += 1;
+            } else if ch == close {
+                depth -= 1;
+                if depth == 0 {
+                    return Some(opening_delimiter + index + ch.len_utf8());
                 }
-                _ => {}
             }
         }
 
@@ -176,8 +222,15 @@ fn matching_closing_brace(line: &str, opening_brace: usize) -> Option<usize> {
     None
 }
 
-fn is_simple_definition_command(command: &str) -> bool {
+fn is_tex_definition_command(command: &str) -> bool {
     matches!(command, "\\def" | "\\gdef" | "\\edef" | "\\xdef")
+}
+
+fn is_command_definition_command(command: &str) -> bool {
+    matches!(
+        command,
+        "\\newcommand" | "\\renewcommand" | "\\providecommand" | "\\DeclareRobustCommand"
+    )
 }
 
 fn is_environment_definition_command(command: &str) -> bool {
@@ -351,6 +404,19 @@ mod tests {
 
         assert_eq!(events.len(), 4);
         assert_eq!(events[1].name, "tabular");
+    }
+
+    #[test]
+    fn keeps_events_after_inline_newcommand_definition() {
+        let events = environment_events(
+            "\\newcommand{\\Call}[2]{\\textsc{#1}(#2)} \\begin{algorithm}[H]\n\\begin{algorithmic}\n\\end{algorithmic}\n\\end{algorithm}\n",
+        );
+
+        assert_eq!(events.len(), 4);
+        assert_eq!(events[0].kind, EnvironmentEventKind::Begin);
+        assert_eq!(events[0].name, "algorithm");
+        assert_eq!(events[3].kind, EnvironmentEventKind::End);
+        assert_eq!(events[3].name, "algorithm");
     }
 
     #[test]

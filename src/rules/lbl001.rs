@@ -19,6 +19,7 @@ impl ProjectRule for UnusedLabel {
             .labels
             .iter()
             .filter(|label| label.kind == LabelKind::Other)
+            .filter(|label| !label.key.contains('#'))
             .filter(|label| !project.is_referenced(&label.key))
             .map(|label| {
                 Diagnostic::new(

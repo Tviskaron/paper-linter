@@ -3,7 +3,9 @@ use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
 
-use crate::latex::scan::{scan_latex, FloatEnv, Graphic, GraphicsPath, Include, Label, Ref};
+use crate::latex::scan::{
+    scan_latex, DocumentClass, FloatEnv, Graphic, GraphicsPath, Include, Label, PackageImport, Ref,
+};
 
 const GRAPHICS_EXTENSIONS: [&str; 6] = ["pdf", "png", "jpg", "jpeg", "eps", "svg"];
 
@@ -21,6 +23,8 @@ pub struct ProjectIndex {
     pub refs: Vec<Ref>,
     pub graphics: Vec<Graphic>,
     pub graphics_paths: Vec<GraphicsPath>,
+    pub document_classes: Vec<DocumentClass>,
+    pub packages: Vec<PackageImport>,
     pub floats: Vec<FloatEnv>,
 }
 
@@ -35,6 +39,8 @@ impl ProjectIndex {
             refs: Vec::new(),
             graphics: Vec::new(),
             graphics_paths: Vec::new(),
+            document_classes: Vec::new(),
+            packages: Vec::new(),
             floats: Vec::new(),
         };
 
@@ -80,6 +86,8 @@ struct ProjectBuilder {
     refs: Vec<Ref>,
     graphics: Vec<Graphic>,
     graphics_paths: Vec<GraphicsPath>,
+    document_classes: Vec<DocumentClass>,
+    packages: Vec<PackageImport>,
     floats: Vec<FloatEnv>,
 }
 
@@ -98,6 +106,8 @@ impl ProjectBuilder {
         self.refs.extend(scan.refs);
         self.graphics.extend(scan.graphics);
         self.graphics_paths.extend(scan.graphics_paths);
+        self.document_classes.extend(scan.document_classes);
+        self.packages.extend(scan.packages);
         self.floats.extend(scan.floats);
         self.files.push(SourceFile {
             path: canonical.clone(),
@@ -123,6 +133,10 @@ impl ProjectBuilder {
             .sort_by(|left, right| left.location.file.cmp(&right.location.file));
         self.graphics_paths
             .sort_by(|left, right| left.location.file.cmp(&right.location.file));
+        self.document_classes
+            .sort_by(|left, right| left.location.file.cmp(&right.location.file));
+        self.packages
+            .sort_by(|left, right| left.location.file.cmp(&right.location.file));
         self.floats
             .sort_by(|left, right| left.location.file.cmp(&right.location.file));
 
@@ -133,6 +147,8 @@ impl ProjectBuilder {
             refs: self.refs,
             graphics: self.graphics,
             graphics_paths: self.graphics_paths,
+            document_classes: self.document_classes,
+            packages: self.packages,
             floats: self.floats,
         }
     }
@@ -443,5 +459,31 @@ mod tests {
             index.find_graphic_case_mismatch(&index.graphics[0]),
             Some(asset)
         );
+    }
+
+    #[test]
+    fn indexes_document_classes_and_packages_across_project() {
+        let dir = temp_project("package-index");
+        let main = dir.join("paper.tex");
+        let macros = dir.join("macros.tex");
+        write(
+            &main,
+            "\\documentclass[sigconf]{acmart}\n\\usepackage{graphicx,xcolor}\n\\input{macros}\n",
+        );
+        write(&macros, "\\RequirePackage{amsmath}\n");
+
+        let index = ProjectIndex::build(std::slice::from_ref(&main), std::slice::from_ref(&main))
+            .expect("project should index");
+
+        assert_eq!(index.document_classes.len(), 1);
+        assert_eq!(index.document_classes[0].name, "acmart");
+        assert_eq!(index.document_classes[0].options, vec!["sigconf"]);
+        let mut packages: Vec<_> = index
+            .packages
+            .iter()
+            .map(|package| package.name.as_str())
+            .collect();
+        packages.sort();
+        assert_eq!(packages, vec!["amsmath", "graphicx", "xcolor"]);
     }
 }

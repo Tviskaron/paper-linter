@@ -87,6 +87,21 @@ pub struct Include {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DocumentClass {
+    pub name: String,
+    pub options: Vec<String>,
+    pub location: SourceLocation,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PackageImport {
+    pub name: String,
+    pub options: Vec<String>,
+    pub command: String,
+    pub location: SourceLocation,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FloatEnv {
     pub kind: FloatKind,
     pub env_name: String,
@@ -103,6 +118,8 @@ pub struct ScanResult {
     pub graphics: Vec<Graphic>,
     pub graphics_paths: Vec<GraphicsPath>,
     pub includes: Vec<Include>,
+    pub document_classes: Vec<DocumentClass>,
+    pub packages: Vec<PackageImport>,
     pub floats: Vec<FloatEnv>,
 }
 
@@ -245,6 +262,39 @@ pub fn scan_latex(file: impl Into<PathBuf>, content: &str) -> ScanResult {
             "input" | "include" => {
                 if let Some((raw_path, end)) = parse_required_arg(content, after_command) {
                     result.includes.push(Include { raw_path, location });
+                    index = end;
+                } else {
+                    index = after_command;
+                }
+            }
+            "documentclass" => {
+                let (options, arg_start) = parse_optional_arg_values(content, after_command);
+                if let Some((name, end)) = parse_required_arg(content, arg_start) {
+                    result.document_classes.push(DocumentClass {
+                        name,
+                        options,
+                        location,
+                    });
+                    index = end;
+                } else {
+                    index = after_command;
+                }
+            }
+            "usepackage" | "RequirePackage" => {
+                let (options, arg_start) = parse_optional_arg_values(content, after_command);
+                if let Some((names, end)) = parse_required_arg(content, arg_start) {
+                    result
+                        .packages
+                        .extend(
+                            split_comma_list(&names)
+                                .into_iter()
+                                .map(|name| PackageImport {
+                                    name,
+                                    options: options.clone(),
+                                    command: command.clone(),
+                                    location: location.clone(),
+                                }),
+                        );
                     index = end;
                 } else {
                     index = after_command;
@@ -406,20 +456,35 @@ fn parse_graphics_paths(raw_paths: &str) -> Vec<String> {
 }
 
 fn skip_optional_args(content: &str, start: usize) -> usize {
+    parse_optional_arg_values(content, start).1
+}
+
+fn parse_optional_arg_values(content: &str, start: usize) -> (Vec<String>, usize) {
     let bytes = content.as_bytes();
     let mut index = start;
+    let mut values = Vec::new();
 
     loop {
         index = skip_ws(bytes, index);
         if bytes.get(index) != Some(&b'[') {
-            return index;
+            return (values, index);
         }
 
         let Some(end) = skip_optional_arg(bytes, index) else {
-            return index;
+            return (values, index);
         };
+        values.extend(split_comma_list(&content[index + 1..end - 1]));
         index = end;
     }
+}
+
+fn split_comma_list(value: &str) -> Vec<String> {
+    value
+        .split(',')
+        .map(str::trim)
+        .filter(|item| !item.is_empty())
+        .map(ToOwned::to_owned)
+        .collect()
 }
 
 fn skip_optional_arg(bytes: &[u8], start: usize) -> Option<usize> {
@@ -577,6 +642,25 @@ mod tests {
             .map(|include| include.raw_path.as_str())
             .collect();
         assert_eq!(paths, vec!["sections/method", "sections/results"]);
+    }
+
+    #[test]
+    fn records_document_class_and_packages() {
+        let scan = scan_latex(
+            Path::new("paper.tex"),
+            "\\documentclass[twocolumn,10pt]{article}\n\\usepackage[sort&compress]{natbib,graphicx}\n\\RequirePackage{amsmath}\n",
+        );
+
+        assert_eq!(scan.document_classes.len(), 1);
+        assert_eq!(scan.document_classes[0].name, "article");
+        assert_eq!(scan.document_classes[0].options, vec!["twocolumn", "10pt"]);
+        assert_eq!(scan.packages.len(), 3);
+        assert_eq!(scan.packages[0].name, "natbib");
+        assert_eq!(scan.packages[0].options, vec!["sort&compress"]);
+        assert_eq!(scan.packages[0].command, "usepackage");
+        assert_eq!(scan.packages[1].name, "graphicx");
+        assert_eq!(scan.packages[2].name, "amsmath");
+        assert_eq!(scan.packages[2].command, "RequirePackage");
     }
 
     #[test]

@@ -289,6 +289,9 @@ pub fn check_project(
     }
 
     for entry in &scoped_entries {
+        if is_bibliography_control_entry(entry) {
+            continue;
+        }
         let missing = missing_required_fields(entry);
         if !missing.is_empty() {
             diagnostics.push(Diagnostic::new(
@@ -515,6 +518,13 @@ fn missing_required_fields(entry: &BibEntry) -> Vec<&'static str> {
     }
 
     missing
+}
+
+fn is_bibliography_control_entry(entry: &BibEntry) -> bool {
+    matches!(
+        entry.entry_type.as_str(),
+        "comment" | "preamble" | "settings" | "set" | "string" | "xdata"
+    )
 }
 
 fn has_any_field(entry: &BibEntry, names: &[&str]) -> bool {
@@ -1150,6 +1160,18 @@ fn is_citation_punctuation_exception(previous: &str, punctuation: char) -> bool 
         "cf.~",
         "cf.,~",
         "vs.~",
+        "ref.~",
+        "refs.~",
+        "fig.~",
+        "figs.~",
+        "eq.~",
+        "eqs.~",
+        "sec.~",
+        "secs.~",
+        "ch.~",
+        "chap.~",
+        "no.~",
+        "nos.~",
         "\\eg,~",
         "\\eg~",
         "\\ie,~",

@@ -26,6 +26,7 @@ mod prj002;
 mod prj003;
 mod prj004;
 mod ref001;
+mod ref002;
 mod sec001;
 mod sec002;
 mod sec003;
@@ -141,7 +142,8 @@ static TAB002_RULE: tab002::MissingTableLabel = tab002::MissingTableLabel;
 static LAT001_RULE: lat001::LegacyLatex = lat001::LegacyLatex;
 static LBL001_RULE: lbl001::UnusedLabel = lbl001::UnusedLabel;
 static REF001_RULE: ref001::MissingReferenceTarget = ref001::MissingReferenceTarget;
-static PROJECT_RULES: [&dyn ProjectRule; 18] = [
+static REF002_RULE: ref002::DuplicateLabel = ref002::DuplicateLabel;
+static PROJECT_RULES: [&dyn ProjectRule; 19] = [
     &FIG001_RULE,
     &ALG001_RULE,
     &CAP001_RULE,
@@ -159,6 +161,7 @@ static PROJECT_RULES: [&dyn ProjectRule; 18] = [
     &TAB002_RULE,
     &LAT001_RULE,
     &REF001_RULE,
+    &REF002_RULE,
     &LBL001_RULE,
 ];
 
@@ -191,7 +194,7 @@ pub struct RuleInfo {
     pub fix: &'static str,
 }
 
-static RULE_INFOS: [RuleInfo; 64] = [
+static RULE_INFOS: [RuleInfo; 65] = [
     RuleInfo {
         code: "ALG001",
         name: "orphan algorithm",
@@ -521,6 +524,14 @@ static RULE_INFOS: [RuleInfo; 64] = [
         fix: "Add the matching \\label{...}, fix the reference key, or make sure the file defining the label is reachable from the project root.",
     },
     RuleInfo {
+        code: "REF002",
+        name: "duplicate label",
+        default_severity: Severity::Error,
+        summary: "The same label key is defined more than once in reachable TeX sources.",
+        why: "Duplicate labels make references ambiguous and usually produce LaTeX warnings or incorrect reference targets.",
+        fix: "Keep one definition for the label, or rename one label and update matching references.",
+    },
+    RuleInfo {
         code: "SEC001",
         name: "skipped section hierarchy level",
         default_severity: Severity::Warning,
@@ -744,7 +755,7 @@ mod tests {
             vec![
                 "FIG001", "ALG001", "CAP001", "CAP002", "FIG002", "FIG003", "FIG004", "FIG005",
                 "FIG006", "FIG007", "FIG008", "PKG001", "PKG002", "TAB001", "TAB002", "LAT001",
-                "REF001", "LBL001"
+                "REF001", "REF002", "LBL001"
             ]
         );
     }
@@ -783,9 +794,10 @@ mod tests {
                 "CIT012", "ENV001", "FIG001", "FIG002", "FIG003", "FIG004", "FIG005", "FIG006",
                 "FIG007", "FIG008", "FMT001", "FMT002", "LBL001", "LAT001", "LAT002", "MTH001",
                 "MTH002", "MTH003", "PRJ001", "PRJ002", "PRJ003", "PRJ004", "PKG001", "PKG002",
-                "REF001", "SEC001", "SEC002", "SEC003", "SEC004", "SEC005", "SEC006", "SYN001",
-                "LOG001", "BLG001", "AUX001", "RDY001", "RDY002", "RDY003", "TAB001", "TAB002",
-                "TEX001", "TEX002", "TXT001", "TXT002", "TXT003", "TXT004", "TXT005", "WS001"
+                "REF001", "REF002", "SEC001", "SEC002", "SEC003", "SEC004", "SEC005", "SEC006",
+                "SYN001", "LOG001", "BLG001", "AUX001", "RDY001", "RDY002", "RDY003", "TAB001",
+                "TAB002", "TEX001", "TEX002", "TXT001", "TXT002", "TXT003", "TXT004", "TXT005",
+                "WS001"
             ]
         );
     }

@@ -11,25 +11,7 @@ use crate::rules::rule_infos;
 
 pub fn render_text(result: &CheckResult) -> String {
     let mut output = String::new();
-
-    for diagnostic in &result.diagnostics {
-        let hint = diagnostic
-            .hint
-            .as_ref()
-            .map(|hint| format!("; hint: {hint}"))
-            .unwrap_or_default();
-        output.push_str(&format!(
-            "{}:{}:{}: {}[{}] {}{}\n",
-            display_path(&diagnostic.file),
-            diagnostic.line,
-            diagnostic.column,
-            diagnostic.severity.as_str(),
-            diagnostic.code,
-            diagnostic.message,
-            hint
-        ));
-    }
-
+    output.push_str("Summary\n");
     output.push_str(&format!(
         "checked {} file(s), {} error(s), {} warning(s)\n",
         result.files_checked,
@@ -37,7 +19,93 @@ pub fn render_text(result: &CheckResult) -> String {
         result.warning_count()
     ));
 
+    if result.diagnostics.is_empty() {
+        return output;
+    }
+
+    let mut errors = 0usize;
+    let mut warnings = 0usize;
+    let mut by_code: BTreeMap<&str, Vec<&Diagnostic>> = BTreeMap::new();
+
+    for diagnostic in &result.diagnostics {
+        match diagnostic.severity {
+            Severity::Error => errors += 1,
+            Severity::Warning => warnings += 1,
+        }
+        by_code.entry(diagnostic.code).or_default().push(diagnostic);
+    }
+
+    output.push('\n');
+    output.push_str("By Severity\n");
+    if errors > 0 {
+        output.push_str(&format!("- error: {errors}\n"));
+    }
+    if warnings > 0 {
+        output.push_str(&format!("- warning: {warnings}\n"));
+    }
+
+    let mut groups: Vec<_> = by_code.into_iter().collect();
+    groups.sort_by(|(left_code, left), (right_code, right)| {
+        right
+            .len()
+            .cmp(&left.len())
+            .then_with(|| left_code.cmp(right_code))
+    });
+
+    output.push('\n');
+    output.push_str("By Rule\n");
+    for (code, diagnostics) in &groups {
+        let severity = diagnostics[0].severity.as_str();
+        let name = rule_name(code);
+        output.push_str(&format!(
+            "- {code} {severity} {name}: {}\n",
+            diagnostics.len()
+        ));
+    }
+
+    output.push('\n');
+    output.push_str("Diagnostics\n");
+    for (code, diagnostics) in groups {
+        let severity = diagnostics[0].severity.as_str();
+        let name = rule_name(code);
+        output.push_str(&format!(
+            "\n{code} {severity} {name} ({})\n",
+            diagnostics.len()
+        ));
+        for diagnostic in diagnostics {
+            output.push_str("  ");
+            output.push_str(&format_diagnostic_line(diagnostic));
+            output.push('\n');
+        }
+    }
+
     output
+}
+
+fn format_diagnostic_line(diagnostic: &Diagnostic) -> String {
+    let hint = diagnostic
+        .hint
+        .as_ref()
+        .map(|hint| format!("; hint: {hint}"))
+        .unwrap_or_default();
+    format!(
+        "{}:{}:{}: {}[{}] {}{}",
+        display_path(&diagnostic.file),
+        diagnostic.line,
+        diagnostic.column,
+        diagnostic.severity.as_str(),
+        diagnostic.code,
+        diagnostic.message,
+        hint
+    )
+}
+
+fn rule_name(code: &str) -> &'static str {
+    rule_infos()
+        .iter()
+        .find(|rule| rule.code == code)
+        .map(|rule| rule.name)
+        .unwrap_or("unknown rule")
 }
 
 pub fn render_json(result: &CheckResult) -> Result<String, serde_json::Error> {
@@ -426,7 +494,9 @@ mod tests {
 
         let text = render_text(&result);
 
-        assert!(text.starts_with("tmp/sample-paper/root.tex:180:29: warning[LBL001]"));
+        assert!(text.starts_with("Summary\nchecked 1 file(s), 0 error(s), 1 warning(s)"));
+        assert!(text.contains("By Rule\n- LBL001 warning unused label: 1\n"));
+        assert!(text.contains("tmp/sample-paper/root.tex:180:29: warning[LBL001]"));
         assert!(!text.contains("/tmp/sample-paper/root.tex:180:29"));
     }
 

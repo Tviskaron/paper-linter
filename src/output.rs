@@ -58,7 +58,7 @@ pub fn render_text(result: &CheckResult) -> String {
         let severity = diagnostics[0].severity.as_str();
         let name = rule_name(code);
         output.push_str(&format!(
-            "- {code} {severity} {name}: {}\n",
+            "- {severity}[{code}] {name}: {}\n",
             diagnostics.len()
         ));
     }
@@ -69,35 +69,68 @@ pub fn render_text(result: &CheckResult) -> String {
         let severity = diagnostics[0].severity.as_str();
         let name = rule_name(code);
         output.push_str(&format!(
-            "\n{code} {severity} {name} ({})\n",
+            "\n{severity}[{code}] {name} ({})\n",
             diagnostics.len()
         ));
+
+        let mut by_message: BTreeMap<DiagnosticMessageKey, Vec<&Diagnostic>> = BTreeMap::new();
         for diagnostic in diagnostics {
+            by_message
+                .entry(DiagnosticMessageKey::from(diagnostic))
+                .or_default()
+                .push(diagnostic);
+        }
+
+        for (message, diagnostics) in by_message {
             output.push_str("  ");
-            output.push_str(&format_diagnostic_line(diagnostic));
+            output.push_str(&message.format(severity, code));
             output.push('\n');
+
+            let mut by_file: BTreeMap<&PathBuf, Vec<&Diagnostic>> = BTreeMap::new();
+            for diagnostic in diagnostics {
+                by_file
+                    .entry(&diagnostic.file)
+                    .or_default()
+                    .push(diagnostic);
+            }
+
+            for (file, diagnostics) in by_file {
+                output.push_str(&format!("    {}\n", display_path(file)));
+                for diagnostic in diagnostics {
+                    output.push_str(&format!(
+                        "      {}:{}\n",
+                        diagnostic.line, diagnostic.column
+                    ));
+                }
+            }
         }
     }
 
     output
 }
 
-fn format_diagnostic_line(diagnostic: &Diagnostic) -> String {
-    let hint = diagnostic
-        .hint
-        .as_ref()
-        .map(|hint| format!("; hint: {hint}"))
-        .unwrap_or_default();
-    format!(
-        "{}:{}:{}: {}[{}] {}{}",
-        display_path(&diagnostic.file),
-        diagnostic.line,
-        diagnostic.column,
-        diagnostic.severity.as_str(),
-        diagnostic.code,
-        diagnostic.message,
-        hint
-    )
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+struct DiagnosticMessageKey {
+    message: String,
+    hint: Option<String>,
+}
+
+impl DiagnosticMessageKey {
+    fn from(diagnostic: &Diagnostic) -> Self {
+        Self {
+            message: diagnostic.message.clone(),
+            hint: diagnostic.hint.clone(),
+        }
+    }
+
+    fn format(&self, severity: &str, code: &str) -> String {
+        let hint = self
+            .hint
+            .as_ref()
+            .map(|hint| format!("; hint: {hint}"))
+            .unwrap_or_default();
+        format!("{severity}[{code}] {}{hint}", self.message)
+    }
 }
 
 fn rule_name(code: &str) -> &'static str {
@@ -495,8 +528,13 @@ mod tests {
         let text = render_text(&result);
 
         assert!(text.starts_with("Summary\nchecked 1 file(s), 0 error(s), 1 warning(s)"));
-        assert!(text.contains("By Rule\n- LBL001 warning unused label: 1\n"));
-        assert!(text.contains("tmp/sample-paper/root.tex:180:29: warning[LBL001]"));
+        assert!(text.contains("By Rule\n- warning[LBL001] unused label: 1\n"));
+        assert!(text.contains("\nwarning[LBL001] unused label (1)\n"));
+        assert!(
+            text.contains("  warning[LBL001] label 'sec:problem_statement' is never referenced\n")
+        );
+        assert!(text.contains("    tmp/sample-paper/root.tex\n"));
+        assert!(text.contains("      180:29\n"));
         assert!(!text.contains("/tmp/sample-paper/root.tex:180:29"));
     }
 

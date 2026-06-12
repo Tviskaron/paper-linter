@@ -1,5 +1,5 @@
 [rules]
-enable = ["TXT003", "TXT004", "CMT001", "SEC001"]
+enable = ["TXT001", "TXT003", "TXT004", "SEC001"]
 disable = ["CIT002", "PRJ004"]
 
 [thresholds]

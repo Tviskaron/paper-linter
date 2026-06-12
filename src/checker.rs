@@ -33,6 +33,7 @@ pub struct CheckOptions {
 pub struct CheckResult {
     pub diagnostics: Vec<Diagnostic>,
     pub files_checked: usize,
+    pub checked_files: Vec<PathBuf>,
 }
 
 impl CheckResult {
@@ -93,6 +94,7 @@ pub fn run_check(options: &CheckOptions) -> Result<CheckResult, ToolError> {
         return Ok(CheckResult {
             diagnostics,
             files_checked: 0,
+            checked_files: Vec::new(),
         });
     }
 
@@ -215,12 +217,21 @@ pub fn run_check(options: &CheckOptions) -> Result<CheckResult, ToolError> {
             .then(left.code.cmp(right.code))
     });
 
+    let checked_files = project
+        .as_ref()
+        .map(|project| {
+            project
+                .files
+                .iter()
+                .map(|file| file.path.clone())
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+
     Ok(CheckResult {
         diagnostics,
-        files_checked: project
-            .as_ref()
-            .map(|project| project.files.len())
-            .unwrap_or(0),
+        files_checked: checked_files.len(),
+        checked_files,
     })
 }
 

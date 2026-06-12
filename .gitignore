@@ -19,6 +19,9 @@ target
 # Local real-paper corpus used for manual smoke/performance checks
 sample-corpus/
 
+# Local web-demo uploads and extracted paper sources
+.cache/
+
 # Local paper samples used during development
 tmp/
 

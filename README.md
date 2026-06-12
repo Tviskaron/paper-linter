@@ -67,10 +67,17 @@ PaperLinter keeps default mode conservative.
 - `--all`: enable every known rule without promoting warnings to errors.
 - `--all-tex`: scan every `.tex` file under directory inputs instead of only
   files reachable from the detected root.
-- `--preset arxiv|acl|neurips`: apply a bundled venue/workflow preset.
+- `--preset essential|standard|strict|polish`: apply a bundled rule profile.
 
 Use `paper-linter rules` to list known rules and `paper-linter explain CODE` for
 the rationale and suggested fix for one rule.
+
+Bundled profiles:
+
+- `essential`: low-noise checks for critical source/package issues.
+- `standard`: broader structure, package, caption, syntax, and typography checks.
+- `strict`: stricter style and bibliography checks for tighter review before submission.
+- `polish`: prose and formatting cleanup checks.
 
 ## What It Checks
 
@@ -198,7 +205,7 @@ presets can enable aliases, rule families, thresholds, and bibliography policy.
 
 ```console
 paper-linter check . --config paper-linter.toml
-paper-linter check . --preset arxiv
+paper-linter check . --preset standard
 ```
 
 Example:

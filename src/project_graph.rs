@@ -5,6 +5,8 @@ use std::path::{Path, PathBuf};
 
 use serde::Serialize;
 
+use crate::latex::significant::{mask_discarded_macro_arguments, mask_inactive_regions};
+
 const MAIN_LIKE_NAMES: [&str; 5] = [
     "main.tex",
     "paper.tex",
@@ -97,6 +99,16 @@ impl ProjectGraph {
             .map(|path| Self::analyze(path))
             .collect()
     }
+
+    pub fn tex_files_for_lint(&self, all_tex: bool) -> Vec<PathBuf> {
+        let files = if all_tex || self.root.is_none() {
+            &self.all_tex
+        } else {
+            &self.reachable
+        };
+
+        files.iter().cloned().collect()
+    }
 }
 
 fn collect_tex_files(dir: &Path) -> io::Result<BTreeSet<PathBuf>> {
@@ -128,6 +140,12 @@ fn is_tex_file(path: &Path) -> bool {
 
 fn declares_document(content: &str) -> bool {
     content.contains("\\documentclass") || content.contains("\\begin{document}")
+}
+
+fn active_tex_content(path: &Path) -> String {
+    let content = fs::read_to_string(path).unwrap_or_default();
+    let content = mask_discarded_macro_arguments(&content);
+    mask_inactive_regions(&content)
 }
 
 fn is_main_like_name(name: &str) -> bool {
@@ -239,28 +257,27 @@ fn root_from_readme(paper_dir: &Path) -> Option<PathBuf> {
 
 fn root_from_magic_comment(paper_dir: &Path, all_tex: &BTreeSet<PathBuf>) -> Option<PathBuf> {
     for path in all_tex {
-        let content = fs::read_to_string(path).ok()?;
+        let content = active_tex_content(path);
         for line in content.lines() {
             let trimmed = line.trim();
-            let rest = trimmed
-                .strip_prefix("%!")
-                .or_else(|| trimmed.strip_prefix("% !TEX"))
-                .or_else(|| trimmed.strip_prefix("% !TeX"));
-            let Some(rest) = rest else {
+            let Some(comment) = trimmed.strip_prefix('%') else {
                 continue;
             };
-            let rest = rest.trim();
-            let Some(rest) = rest
-                .strip_prefix("root")
-                .or_else(|| rest.strip_prefix("Root"))
-            else {
-                continue;
-            };
-            let rest = rest.trim().trim_start_matches('=').trim();
-            if rest.is_empty() {
+            let comment = comment.trim_start();
+            let comment = comment.strip_prefix('!').unwrap_or(comment).trim_start();
+            let lower = comment.to_ascii_lowercase();
+            if !lower.starts_with("tex root") && !lower.starts_with("root") {
                 continue;
             }
-            if let Some(candidate) = resolve_include_path(paper_dir, path, rest) {
+
+            let Some((_, value)) = comment.split_once('=') else {
+                continue;
+            };
+            let value = value.trim().trim_matches('"').trim_matches('\'');
+            if value.is_empty() {
+                continue;
+            }
+            if let Some(candidate) = resolve_include_path(paper_dir, path, value) {
                 return Some(candidate);
             }
         }
@@ -357,7 +374,7 @@ fn root_from_primary_roots(
     let mut document_roots = Vec::new();
 
     for path in all_tex {
-        let content = fs::read_to_string(path).unwrap_or_default();
+        let content = active_tex_content(path);
         if declares_document(&content) {
             document_roots.push(path.clone());
         }
@@ -481,7 +498,7 @@ fn build_include_graph(
 
     for path in all_tex {
         included_by.entry(path.clone()).or_default();
-        let content = fs::read_to_string(path).unwrap_or_default();
+        let content = active_tex_content(path);
         for include in find_include_paths(&content) {
             if let Some(child) = resolve_include_path(paper_dir, path, &include.raw_path) {
                 if all_tex.contains(&child) {
@@ -533,7 +550,7 @@ fn collect_missing_includes(paper_dir: &Path, all_tex: &BTreeSet<PathBuf>) -> Ve
     let mut missing = Vec::new();
 
     for path in all_tex {
-        let content = fs::read_to_string(path).unwrap_or_default();
+        let content = active_tex_content(path);
         for include in find_include_paths(&content) {
             let resolved = resolve_include_path(paper_dir, path, &include.raw_path);
             let missing_target = match resolved {
@@ -812,5 +829,43 @@ mod tests {
 
         let graph = ProjectGraph::analyze(&dir).expect("analyze");
         assert_eq!(graph.root, Some(main.canonicalize().unwrap()));
+    }
+
+    #[test]
+    fn resolves_tex_root_magic_comment() {
+        let dir = temp_project("magic-root");
+        let main = dir.join("main.tex");
+        let section = dir.join("sections/method.tex");
+        write(
+            &main,
+            "\\documentclass{article}\n\\input{sections/method}\n",
+        );
+        write(&section, "%! TeX root = ../main.tex\n\\section{Method}\n");
+
+        let graph = ProjectGraph::analyze(&dir).expect("analyze");
+
+        assert_eq!(graph.root, Some(main.canonicalize().unwrap()));
+        assert_eq!(graph.root_method, super::RootMethod::MagicComment);
+        assert!(graph.reachable.contains(&section.canonicalize().unwrap()));
+    }
+
+    #[test]
+    fn ignores_inactive_include_edges() {
+        let dir = temp_project("inactive-include");
+        let main = dir.join("main.tex");
+        let live = dir.join("live.tex");
+        let dead = dir.join("dead.tex");
+        write(
+            &main,
+            "\\documentclass{article}\n\\begin{document}\n\\input{live}\n\\begin{comment}\n\\input{dead}\n\\end{comment}\n\\iffalse\n\\input{dead}\n\\fi\n\\end{document}\n",
+        );
+        write(&live, "Live\n");
+        write(&dead, "Dead\n");
+
+        let graph = ProjectGraph::analyze(&dir).expect("analyze");
+
+        assert!(graph.reachable.contains(&main.canonicalize().unwrap()));
+        assert!(graph.reachable.contains(&live.canonicalize().unwrap()));
+        assert!(!graph.reachable.contains(&dead.canonicalize().unwrap()));
     }
 }

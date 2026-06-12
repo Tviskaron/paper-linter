@@ -25,13 +25,15 @@ fn parse_bib_entries_by_key_search(
     content: &str,
     keys: &HashSet<String>,
 ) -> Vec<BibEntry> {
+    let lower_content = content.to_ascii_lowercase();
     let mut line_starts = None;
     let mut seen_starts = HashSet::new();
     let mut entries = Vec::new();
 
     for key in keys {
+        let lower_key = key.to_ascii_lowercase();
         let mut offset = 0;
-        while let Some(relative) = content[offset..].find(key) {
+        while let Some(relative) = lower_content[offset..].find(&lower_key) {
             let key_index = offset + relative;
             offset = key_index + key.len();
 
@@ -63,7 +65,7 @@ fn parse_bib_entries_by_key_search(
             else {
                 continue;
             };
-            if entry_key != key || entry_key_start != key_index {
+            if !key_matches(keys, entry_key) || entry_key_start != key_index {
                 continue;
             }
 
@@ -142,7 +144,7 @@ fn parse_bib_entries_by_header_scan(
                         if !matches!(entry_type_lower.as_str(), "comment" | "string" | "preamble") {
                             let body_start = after_type + 1;
                             if let Some((key, _, _)) = read_entry_key(content, body_start) {
-                                if keys.contains(key) {
+                                if key_matches(keys, key) {
                                     if let Some(end) =
                                         balanced_group_end(content, after_type, open, close)
                                     {
@@ -236,7 +238,7 @@ fn parse_bib_entries_matching(
                 offset = body_start;
                 continue;
             };
-            if !keys.contains(key) {
+            if !key_matches(keys, key) {
                 offset = comma + 1;
                 continue;
             }
@@ -262,6 +264,11 @@ fn parse_bib_entries_matching(
     }
 
     entries
+}
+
+fn key_matches(keys: &HashSet<String>, key: &str) -> bool {
+    keys.iter()
+        .any(|candidate| candidate.eq_ignore_ascii_case(key))
 }
 
 fn read_entry_key(content: &str, body_start: usize) -> Option<(&str, usize, usize)> {

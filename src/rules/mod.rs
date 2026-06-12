@@ -194,7 +194,7 @@ pub struct RuleInfo {
     pub fix: &'static str,
 }
 
-static RULE_INFOS: [RuleInfo; 65] = [
+static RULE_INFOS: [RuleInfo; 66] = [
     RuleInfo {
         code: "ALG001",
         name: "orphan algorithm",
@@ -330,6 +330,14 @@ static RULE_INFOS: [RuleInfo; 65] = [
         summary: "A declared bibliography file is missing but a prebuilt .bbl file supplies citation keys.",
         why: "arXiv bundles often ship .bbl without .bib, so citation edits will not rebuild bibliography metadata.",
         fix: "Restore the missing .bib file if you need to edit bibliography entries.",
+    },
+    RuleInfo {
+        code: "CIT013",
+        name: "citation key case mismatch",
+        default_severity: Severity::Warning,
+        summary: "A citation key differs from the matching bibliography key only by letter case.",
+        why: "BibTeX resolves keys case-insensitively, but case drift makes source search, review, and bibliography tooling less predictable.",
+        fix: "Use the bibliography key spelling exactly in the citation command.",
     },
     RuleInfo {
         code: "ENV001",
@@ -791,13 +799,13 @@ mod tests {
             vec![
                 "ALG001", "CAP001", "CAP002", "BIB001", "BIB002", "CIT001", "CIT002", "CIT003",
                 "CIT004", "CIT005", "CIT006", "CIT007", "CIT008", "CIT009", "CIT010", "CIT011",
-                "CIT012", "ENV001", "FIG001", "FIG002", "FIG003", "FIG004", "FIG005", "FIG006",
-                "FIG007", "FIG008", "FMT001", "FMT002", "LBL001", "LAT001", "LAT002", "MTH001",
-                "MTH002", "MTH003", "PRJ001", "PRJ002", "PRJ003", "PRJ004", "PKG001", "PKG002",
-                "REF001", "REF002", "SEC001", "SEC002", "SEC003", "SEC004", "SEC005", "SEC006",
-                "SYN001", "LOG001", "BLG001", "AUX001", "RDY001", "RDY002", "RDY003", "TAB001",
-                "TAB002", "TEX001", "TEX002", "TXT001", "TXT002", "TXT003", "TXT004", "TXT005",
-                "WS001"
+                "CIT012", "CIT013", "ENV001", "FIG001", "FIG002", "FIG003", "FIG004", "FIG005",
+                "FIG006", "FIG007", "FIG008", "FMT001", "FMT002", "LBL001", "LAT001", "LAT002",
+                "MTH001", "MTH002", "MTH003", "PRJ001", "PRJ002", "PRJ003", "PRJ004", "PKG001",
+                "PKG002", "REF001", "REF002", "SEC001", "SEC002", "SEC003", "SEC004", "SEC005",
+                "SEC006", "SYN001", "LOG001", "BLG001", "AUX001", "RDY001", "RDY002", "RDY003",
+                "TAB001", "TAB002", "TEX001", "TEX002", "TXT001", "TXT002", "TXT003", "TXT004",
+                "TXT005", "WS001"
             ]
         );
     }

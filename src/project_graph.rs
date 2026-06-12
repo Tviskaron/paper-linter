@@ -644,7 +644,7 @@ fn find_include_paths(content: &str, aliases: &ScanAliases) -> Vec<IncludeMatch>
             });
         }
 
-        offset = body_end + 1;
+        offset = body_end;
     }
 
     matches
@@ -841,6 +841,28 @@ mod tests {
         assert!(graph.reachable.contains(&main.canonicalize().unwrap()));
         assert!(graph.reachable.contains(&chapter.canonicalize().unwrap()));
         assert!(graph.reachable.contains(&method.canonicalize().unwrap()));
+    }
+
+    #[test]
+    fn bare_input_at_end_of_file_does_not_panic() {
+        let dir = temp_project("bare-input-eof");
+        let main = dir.join("main.tex");
+        let section = dir.join("src/main/04-dataset.tex");
+        let overview = dir.join("src/main/04.1-overview.tex");
+        write(
+            &main,
+            "\\documentclass{article}\n\\input src/main/04-dataset\n",
+        );
+        write(
+            &section,
+            "\\section{Dataset}\n\\label{sec:dataset}\n\n\\input src/main/04.1-overview",
+        );
+        write(&overview, "Body\n");
+
+        let graph = ProjectGraph::analyze(&dir).expect("analyze");
+
+        assert!(graph.missing_includes.is_empty());
+        assert!(graph.reachable.contains(&overview.canonicalize().unwrap()));
     }
 
     #[test]

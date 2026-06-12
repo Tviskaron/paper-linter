@@ -12,6 +12,7 @@ pub fn strict_only(code: &str) -> bool {
             | "CIT009"
             | "CIT010"
             | "CIT011"
+            | "CIT013"
             | "FMT001"
             | "FMT002"
             | "LBL001"

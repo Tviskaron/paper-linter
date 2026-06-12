@@ -53,10 +53,7 @@ impl Rule for PreambleBraceBalance {
 }
 
 fn extract_preamble(content: &str) -> &str {
-    content
-        .split("\\begin{document}")
-        .next()
-        .unwrap_or(content)
+    content.split("\\begin{document}").next().unwrap_or(content)
 }
 
 fn uncomment_line(line: &str) -> &str {
@@ -105,7 +102,8 @@ mod tests {
 
     #[test]
     fn detects_unclosed_author_block() {
-        let content = "\\documentclass{article}\n\\author{Alice \\thanks{equal}\n\\begin{document}\n";
+        let content =
+            "\\documentclass{article}\n\\author{Alice \\thanks{equal}\n\\begin{document}\n";
         let diagnostics = PreambleBraceBalance.check_file(Path::new("main.tex"), content);
         assert_eq!(diagnostics.len(), 1);
         assert_eq!(diagnostics[0].code, "SYN001");
@@ -113,7 +111,8 @@ mod tests {
 
     #[test]
     fn accepts_balanced_author_block() {
-        let content = "\\documentclass{article}\n\\author{Alice \\thanks{equal}}\n\\begin{document}\n";
+        let content =
+            "\\documentclass{article}\n\\author{Alice \\thanks{equal}}\n\\begin{document}\n";
         let diagnostics = PreambleBraceBalance.check_file(Path::new("main.tex"), content);
         assert!(diagnostics.is_empty());
     }

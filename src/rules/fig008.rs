@@ -38,7 +38,10 @@ impl ProjectRule for CorruptImage {
                     Diagnostic::new(
                         self.code(),
                         Severity::Error,
-                        format!("image '{}' appears corrupt or unreadable: {reason}", graphic.raw_path),
+                        format!(
+                            "image '{}' appears corrupt or unreadable: {reason}",
+                            graphic.raw_path
+                        ),
                         &graphic.location.file,
                         graphic.location.line,
                         graphic.location.column,

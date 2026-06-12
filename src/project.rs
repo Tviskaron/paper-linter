@@ -836,11 +836,9 @@ mod tests {
         let index = ProjectIndex::build(std::slice::from_ref(&main), std::slice::from_ref(&main))
             .expect("project should index");
 
-        assert!(
-            index
-                .refs
-                .iter()
-                .any(|reference| reference.command == "figref" && reference.key == "fig:one")
-        );
+        assert!(index
+            .refs
+            .iter()
+            .any(|reference| reference.command == "figref" && reference.key == "fig:one"));
     }
 }

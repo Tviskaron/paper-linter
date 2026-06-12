@@ -154,12 +154,10 @@ pub fn run_check(options: &CheckOptions) -> Result<CheckResult, ToolError> {
             || family_may_be_enabled("AUX", options)
             || options.select.is_empty()
         {
-            diagnostics.extend(
-                check_artifacts(dir).map_err(|source| ToolError::Io {
-                    path: Some(dir.clone()),
-                    source,
-                })?,
-            );
+            diagnostics.extend(check_artifacts(dir).map_err(|source| ToolError::Io {
+                path: Some(dir.clone()),
+                source,
+            })?);
         }
     }
 
@@ -169,12 +167,12 @@ pub fn run_check(options: &CheckOptions) -> Result<CheckResult, ToolError> {
             .first()
             .cloned()
             .unwrap_or_else(|| path.parent().unwrap_or(path).to_path_buf());
-        diagnostics.extend(
-            compile_regression_diagnostics(path, &paper_root).map_err(|source| ToolError::Io {
+        diagnostics.extend(compile_regression_diagnostics(path, &paper_root).map_err(
+            |source| ToolError::Io {
                 path: Some(path.clone()),
                 source,
-            })?,
-        );
+            },
+        )?);
     }
 
     diagnostics.retain(|diagnostic| code_is_enabled(diagnostic.code, options));

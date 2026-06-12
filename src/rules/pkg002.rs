@@ -73,7 +73,7 @@ impl ProjectRule for PackageDependencies {
                                 format!("environment '{env}' requires package 'amsmath'"),
                                 &file.path,
                                 line_number,
-                                line.find(&env).unwrap_or(0) + 1,
+                                line.find(env).unwrap_or(0) + 1,
                             )
                             .with_hint("add \\usepackage{amsmath}"),
                         );
@@ -126,8 +126,22 @@ impl ProjectRule for PackageDependencies {
 
 fn amsmath_environments_in_line(line: &str) -> Vec<&'static str> {
     const ENVIRONMENTS: &[&str] = &[
-        "align", "align*", "alignat", "alignat*", "equation", "equation*", "gather", "gather*",
-        "multline", "multline*", "split", "cases", "matrix", "pmatrix", "bmatrix", "vmatrix",
+        "align",
+        "align*",
+        "alignat",
+        "alignat*",
+        "equation",
+        "equation*",
+        "gather",
+        "gather*",
+        "multline",
+        "multline*",
+        "split",
+        "cases",
+        "matrix",
+        "pmatrix",
+        "bmatrix",
+        "vmatrix",
         "Vmatrix",
     ];
 
@@ -168,6 +182,8 @@ mod tests {
         };
 
         let diagnostics = PackageDependencies.check_project(&project);
-        assert!(diagnostics.iter().any(|diag| diag.message.contains("graphicx")));
+        assert!(diagnostics
+            .iter()
+            .any(|diag| diag.message.contains("graphicx")));
     }
 }

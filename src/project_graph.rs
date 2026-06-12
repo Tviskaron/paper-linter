@@ -136,18 +136,88 @@ fn is_main_like_name(name: &str) -> bool {
         .any(|candidate| candidate.eq_ignore_ascii_case(name))
 }
 
-fn resolve_include_path(current_file: &Path, target: &str) -> Option<PathBuf> {
+pub fn is_likely_alternate_or_service_tex(path: &Path) -> bool {
+    let keywords = [
+        "appendix",
+        "appendices",
+        "backup",
+        "camera-ready",
+        "cameraready",
+        "copy",
+        "draft",
+        "example",
+        "rebuttal",
+        "response",
+        "revision",
+        "sample",
+        "supp",
+        "supplement",
+        "supplementary",
+        "template",
+        "translation",
+        "translated",
+    ];
+
+    path.components().any(|component| {
+        let text = component.as_os_str().to_string_lossy().to_ascii_lowercase();
+        keywords.iter().any(|keyword| text.contains(keyword))
+    })
+}
+
+fn resolve_include_path(paper_dir: &Path, current_file: &Path, target: &str) -> Option<PathBuf> {
     let raw = target.trim();
     if raw.is_empty() {
         return None;
     }
 
-    let mut candidate = current_file.parent()?.join(raw);
-    if candidate.extension().is_none() {
-        candidate.set_extension("tex");
+    let raw_path = Path::new(raw);
+    if is_explicit_non_tex_input(raw_path) {
+        return Some(current_file.parent()?.join(raw_path));
     }
 
-    candidate.canonicalize().ok().filter(|path| path.is_file())
+    let base = current_file.parent()?;
+    let mut candidates = tex_include_candidates(base, raw_path);
+    if !raw_path.is_absolute() {
+        candidates.extend(tex_include_candidates(paper_dir, raw_path));
+    }
+
+    candidates
+        .into_iter()
+        .find_map(|candidate| candidate.canonicalize().ok().filter(|path| path.is_file()))
+}
+
+fn is_explicit_non_tex_input(raw_path: &Path) -> bool {
+    raw_path
+        .extension()
+        .and_then(|extension| extension.to_str())
+        .is_some_and(|extension| !extension.eq_ignore_ascii_case("tex"))
+}
+
+fn tex_include_candidates(base: &Path, raw: &Path) -> Vec<PathBuf> {
+    let mut candidates = Vec::new();
+    let raw_path = if raw.is_absolute() {
+        raw.to_path_buf()
+    } else {
+        base.join(raw)
+    };
+
+    if raw
+        .extension()
+        .and_then(|extension| extension.to_str())
+        .is_none_or(|extension| extension.eq_ignore_ascii_case("tex"))
+    {
+        candidates.push(raw_path.clone());
+    }
+
+    if !raw_path
+        .extension()
+        .and_then(|extension| extension.to_str())
+        .is_some_and(|extension| extension.eq_ignore_ascii_case("tex"))
+    {
+        candidates.push(PathBuf::from(format!("{}.tex", raw_path.display())));
+    }
+
+    candidates
 }
 
 fn root_from_readme(paper_dir: &Path) -> Option<PathBuf> {
@@ -167,7 +237,7 @@ fn root_from_readme(paper_dir: &Path) -> Option<PathBuf> {
     None
 }
 
-fn root_from_magic_comment(_paper_dir: &Path, all_tex: &BTreeSet<PathBuf>) -> Option<PathBuf> {
+fn root_from_magic_comment(paper_dir: &Path, all_tex: &BTreeSet<PathBuf>) -> Option<PathBuf> {
     for path in all_tex {
         let content = fs::read_to_string(path).ok()?;
         for line in content.lines() {
@@ -190,7 +260,7 @@ fn root_from_magic_comment(_paper_dir: &Path, all_tex: &BTreeSet<PathBuf>) -> Op
             if rest.is_empty() {
                 continue;
             }
-            if let Some(candidate) = resolve_include_path(path, rest) {
+            if let Some(candidate) = resolve_include_path(paper_dir, path, rest) {
                 return Some(candidate);
             }
         }
@@ -403,7 +473,7 @@ fn resolve_root(
 }
 
 fn build_include_graph(
-    _paper_dir: &Path,
+    paper_dir: &Path,
     all_tex: &BTreeSet<PathBuf>,
 ) -> (IncludeEdges, IncludeMap) {
     let mut edges = Vec::new();
@@ -413,7 +483,7 @@ fn build_include_graph(
         included_by.entry(path.clone()).or_default();
         let content = fs::read_to_string(path).unwrap_or_default();
         for include in find_include_paths(&content) {
-            if let Some(child) = resolve_include_path(path, &include.raw_path) {
+            if let Some(child) = resolve_include_path(paper_dir, path, &include.raw_path) {
                 if all_tex.contains(&child) {
                     edges.push((path.clone(), child.clone()));
                     included_by.entry(child).or_default().insert(path.clone());
@@ -465,12 +535,12 @@ fn collect_missing_includes(paper_dir: &Path, all_tex: &BTreeSet<PathBuf>) -> Ve
     for path in all_tex {
         let content = fs::read_to_string(path).unwrap_or_default();
         for include in find_include_paths(&content) {
-            let resolved = resolve_include_path(path, &include.raw_path);
+            let resolved = resolve_include_path(paper_dir, path, &include.raw_path);
             let missing_target = match resolved {
                 None => true,
                 Some(resolved) => paper_root
                     .as_ref()
-                    .is_some_and(|root| !resolved.starts_with(root)),
+                    .is_some_and(|root| resolved.is_file() && !resolved.starts_with(root)),
             };
             if missing_target {
                 missing.push(MissingInclude {
@@ -507,7 +577,7 @@ fn find_include_paths(content: &str) -> Vec<IncludeMatch> {
             continue;
         }
 
-        let Some((body_start, body_end)) = read_required_argument(content, after_name) else {
+        let Some((body_start, body_end)) = read_include_argument(content, after_name) else {
             offset = after_name;
             continue;
         };
@@ -554,6 +624,22 @@ fn read_required_argument(content: &str, mut offset: usize) -> Option<(usize, us
 
     let end = balanced_group_end(content, offset, '{', '}')?;
     Some((offset + 1, end))
+}
+
+fn read_include_argument(content: &str, offset: usize) -> Option<(usize, usize)> {
+    if let Some(argument) = read_required_argument(content, offset) {
+        return Some(argument);
+    }
+
+    let start = skip_ascii_whitespace(content, offset);
+    let mut end = start;
+    while content.as_bytes().get(end).is_some_and(|byte| {
+        !byte.is_ascii_whitespace() && !matches!(byte, b'%' | b'{' | b'}' | b'\\')
+    }) {
+        end += 1;
+    }
+
+    (end > start).then_some((start, end))
 }
 
 fn skip_ascii_whitespace(content: &str, mut offset: usize) -> usize {
@@ -684,6 +770,35 @@ mod tests {
         let graph = ProjectGraph::analyze(&dir).expect("analyze");
         assert!(graph.reachable.contains(&main.canonicalize().unwrap()));
         assert!(!graph.reachable.contains(&orphan.canonicalize().unwrap()));
+    }
+
+    #[test]
+    fn follows_bare_and_root_relative_inputs() {
+        let dir = temp_project("bare-root-relative");
+        let main = dir.join("main.tex");
+        let chapter = dir.join("chapters/one.tex");
+        let method = dir.join("sections/method.tex");
+        write(&main, "\\documentclass{article}\n\\input chapters/one\n");
+        write(&chapter, "\\input sections/method\n");
+        write(&method, "Body\n");
+
+        let graph = ProjectGraph::analyze(&dir).expect("analyze");
+
+        assert!(graph.missing_includes.is_empty());
+        assert!(graph.reachable.contains(&main.canonicalize().unwrap()));
+        assert!(graph.reachable.contains(&chapter.canonicalize().unwrap()));
+        assert!(graph.reachable.contains(&method.canonicalize().unwrap()));
+    }
+
+    #[test]
+    fn ignores_explicit_non_tex_inputs_for_missing_include() {
+        let dir = temp_project("non-tex-input");
+        let main = dir.join("paper.tex");
+        write(&main, "\\documentclass{article}\n\\input{plot.pgf}\n");
+
+        let graph = ProjectGraph::analyze(&dir).expect("analyze");
+
+        assert!(graph.missing_includes.is_empty());
     }
 
     #[test]

@@ -1,5 +1,5 @@
 use crate::diagnostic::{Diagnostic, Severity};
-use crate::project_graph::ProjectGraph;
+use crate::project_graph::{is_likely_alternate_or_service_tex, ProjectGraph};
 use crate::rules::GraphProjectRule;
 
 pub struct OrphanTex;
@@ -22,6 +22,7 @@ impl GraphProjectRule for OrphanTex {
             .all_tex
             .iter()
             .filter(|path| !graph.reachable.contains(*path))
+            .filter(|path| !is_likely_alternate_or_service_tex(path))
             .map(|path| {
                 Diagnostic::new(
                     self.code(),

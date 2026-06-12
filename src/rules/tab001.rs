@@ -19,6 +19,7 @@ impl ProjectRule for OrphanTable {
             .floats
             .iter()
             .filter(|float| float.kind == FloatKind::Table)
+            .filter(|float| float.env_name != "subtable")
             .flat_map(|float| float.labels.iter())
             .filter(|label| !project.is_referenced(&label.key))
             .map(|label| {

@@ -1,5 +1,5 @@
 use crate::diagnostic::{Diagnostic, Severity};
-use crate::project_graph::ProjectGraph;
+use crate::project_graph::{is_likely_alternate_or_service_tex, ProjectGraph};
 use crate::rules::GraphProjectRule;
 
 pub struct AmbiguousRoot;
@@ -14,12 +14,17 @@ impl GraphProjectRule for AmbiguousRoot {
     }
 
     fn check_graph(&self, graph: &ProjectGraph) -> Vec<Diagnostic> {
-        if graph.root_candidates.len() <= 1 {
+        let candidates: Vec<_> = graph
+            .root_candidates
+            .iter()
+            .filter(|path| !is_likely_alternate_or_service_tex(path))
+            .collect();
+
+        if candidates.len() <= 1 {
             return Vec::new();
         }
 
-        let candidates: Vec<_> = graph
-            .root_candidates
+        let candidates: Vec<_> = candidates
             .iter()
             .map(|path| path.display().to_string())
             .collect();

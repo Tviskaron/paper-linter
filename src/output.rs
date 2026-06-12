@@ -11,33 +11,182 @@ use crate::rules::rule_infos;
 
 pub fn render_text(result: &CheckResult) -> String {
     let mut output = String::new();
-
-    for diagnostic in &result.diagnostics {
-        let hint = diagnostic
-            .hint
-            .as_ref()
-            .map(|hint| format!("; hint: {hint}"))
-            .unwrap_or_default();
-        output.push_str(&format!(
-            "{}:{}:{}: {}[{}] {}{}\n",
-            display_path(&diagnostic.file),
-            diagnostic.line,
-            diagnostic.column,
-            diagnostic.severity.as_str(),
-            diagnostic.code,
-            diagnostic.message,
-            hint
-        ));
-    }
-
+    output.push_str("# Paper Linter Report\n\n");
+    output.push_str("## Summary\n\n");
     output.push_str(&format!(
-        "checked {} file(s), {} error(s), {} warning(s)\n",
+        "checked {} file(s), {} error(s), {} warning(s)\n\n",
+        result.files_checked,
+        result.error_count(),
+        result.warning_count()
+    ));
+    output.push_str("| Files checked | Errors | Warnings |\n");
+    output.push_str("|---:|---:|---:|\n");
+    output.push_str(&format!(
+        "| {} | {} | {} |\n",
         result.files_checked,
         result.error_count(),
         result.warning_count()
     ));
 
+    if result.diagnostics.is_empty() {
+        return output;
+    }
+
+    let mut errors = 0usize;
+    let mut warnings = 0usize;
+    let mut by_code: BTreeMap<&str, Vec<&Diagnostic>> = BTreeMap::new();
+
+    for diagnostic in &result.diagnostics {
+        match diagnostic.severity {
+            Severity::Error => errors += 1,
+            Severity::Warning => warnings += 1,
+        }
+        by_code.entry(diagnostic.code).or_default().push(diagnostic);
+    }
+
+    output.push('\n');
+    output.push_str("## By Severity\n\n");
+    output.push_str("| Severity | Count |\n");
+    output.push_str("|---|---:|\n");
+    if errors > 0 {
+        output.push_str(&format!("| error | {errors} |\n"));
+    }
+    if warnings > 0 {
+        output.push_str(&format!("| warning | {warnings} |\n"));
+    }
+
+    let mut groups: Vec<_> = by_code.into_iter().collect();
+    groups.sort_by(|(left_code, left), (right_code, right)| {
+        right
+            .len()
+            .cmp(&left.len())
+            .then_with(|| left_code.cmp(right_code))
+    });
+
+    output.push('\n');
+    output.push_str("## By Rule\n\n");
+    output.push_str("| Rule | Severity | Name | Count |\n");
+    output.push_str("|---|---|---|---:|\n");
+    for (code, diagnostics) in &groups {
+        let severity = diagnostics[0].severity.as_str();
+        let name = rule_name(code);
+        output.push_str(&format!(
+            "| `{code}` | {severity} | {} | {} |\n",
+            markdown_table_cell(name),
+            diagnostics.len()
+        ));
+    }
+
+    output.push('\n');
+    output.push_str("## Diagnostics\n");
+    for (code, diagnostics) in groups {
+        let severity = diagnostics[0].severity.as_str();
+        let name = rule_name(code);
+
+        let mut by_message: BTreeMap<DiagnosticMessageKey, Vec<&Diagnostic>> = BTreeMap::new();
+        for diagnostic in diagnostics {
+            by_message
+                .entry(DiagnosticMessageKey::from(diagnostic))
+                .or_default()
+                .push(diagnostic);
+        }
+
+        let single_message_group = by_message.len() == 1;
+        if single_message_group {
+            let (message, diagnostics) = by_message.into_iter().next().expect("one group");
+            output.push_str(&format!(
+                "\n### {} ({})\n\n",
+                message.format(severity, code),
+                diagnostics.len()
+            ));
+            push_file_locations(&mut output, diagnostics, 2, 4);
+            continue;
+        }
+
+        output.push_str(&format!(
+            "\n### {severity}[{code}] {name} ({})\n",
+            by_message
+                .values()
+                .map(|diagnostics| diagnostics.len())
+                .sum::<usize>()
+        ));
+
+        for (message, diagnostics) in by_message {
+            output.push_str(&format!("\n#### {}\n\n", message.format(severity, code)));
+            push_file_locations(&mut output, diagnostics, 0, 2);
+        }
+    }
+
     output
+}
+
+fn push_file_locations(
+    output: &mut String,
+    diagnostics: Vec<&Diagnostic>,
+    file_indent: usize,
+    location_indent: usize,
+) {
+    let mut by_file: BTreeMap<&PathBuf, Vec<&Diagnostic>> = BTreeMap::new();
+    for diagnostic in diagnostics {
+        by_file
+            .entry(&diagnostic.file)
+            .or_default()
+            .push(diagnostic);
+    }
+
+    for (file, diagnostics) in by_file {
+        output.push_str(&format!(
+            "{:file_indent$}- `{}`\n",
+            "",
+            display_path(file),
+            file_indent = file_indent
+        ));
+        for diagnostic in diagnostics {
+            output.push_str(&format!(
+                "{:location_indent$}- `{}:{}`\n",
+                "",
+                diagnostic.line,
+                diagnostic.column,
+                location_indent = location_indent
+            ));
+        }
+    }
+}
+
+fn markdown_table_cell(value: &str) -> String {
+    value.replace('|', "\\|")
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+struct DiagnosticMessageKey {
+    message: String,
+    hint: Option<String>,
+}
+
+impl DiagnosticMessageKey {
+    fn from(diagnostic: &Diagnostic) -> Self {
+        Self {
+            message: diagnostic.message.clone(),
+            hint: diagnostic.hint.clone(),
+        }
+    }
+
+    fn format(&self, severity: &str, code: &str) -> String {
+        let hint = self
+            .hint
+            .as_ref()
+            .map(|hint| format!("; hint: {hint}"))
+            .unwrap_or_default();
+        format!("{severity}[{code}] {}{hint}", self.message)
+    }
+}
+
+fn rule_name(code: &str) -> &'static str {
+    rule_infos()
+        .iter()
+        .find(|rule| rule.code == code)
+        .map(|rule| rule.name)
+        .unwrap_or("unknown rule")
 }
 
 pub fn render_json(result: &CheckResult) -> Result<String, serde_json::Error> {
@@ -426,8 +575,50 @@ mod tests {
 
         let text = render_text(&result);
 
-        assert!(text.starts_with("tmp/sample-paper/root.tex:180:29: warning[LBL001]"));
+        assert!(text.starts_with("# Paper Linter Report\n\n## Summary\n\n"));
+        assert!(text.contains("| Files checked | Errors | Warnings |\n"));
+        assert!(text.contains("| 1 | 0 | 1 |\n"));
+        assert!(text.contains("| `LBL001` | warning | unused label | 1 |\n"));
+        assert!(text.contains(
+            "\n### warning[LBL001] label 'sec:problem_statement' is never referenced (1)\n"
+        ));
+        assert!(!text.contains("\n### warning[LBL001] unused label (1)\n"));
+        assert!(text.contains("  - `tmp/sample-paper/root.tex`\n"));
+        assert!(text.contains("    - `180:29`\n"));
         assert!(!text.contains("/tmp/sample-paper/root.tex:180:29"));
+    }
+
+    #[test]
+    fn text_output_keeps_message_groups_when_messages_differ() {
+        let path = std::env::current_dir().unwrap().join("tmp/main.tex");
+        let result = CheckResult {
+            diagnostics: vec![
+                Diagnostic::new(
+                    "TXT004",
+                    Severity::Warning,
+                    "filler word 'very'",
+                    &path,
+                    1,
+                    2,
+                ),
+                Diagnostic::new(
+                    "TXT004",
+                    Severity::Warning,
+                    "filler word 'just'",
+                    &path,
+                    3,
+                    4,
+                ),
+            ],
+            files_checked: 1,
+        };
+
+        let text = render_text(&result);
+
+        assert!(text.contains("### warning[TXT004] filler word (2)"));
+        assert!(text.contains("#### warning[TXT004] filler word 'just'\n"));
+        assert!(text.contains("#### warning[TXT004] filler word 'very'\n"));
+        assert!(text.contains("- `tmp/main.tex`\n"));
     }
 
     #[test]

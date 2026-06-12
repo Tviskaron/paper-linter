@@ -2,7 +2,18 @@ use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
 
+use crate::latex::scan::ScanAliases;
+use crate::project_graph::ProjectGraph;
+
 pub fn discover_tex_files(paths: &[PathBuf], all_tex: bool) -> io::Result<Vec<PathBuf>> {
+    discover_tex_files_with_aliases(paths, all_tex, &ScanAliases::default())
+}
+
+pub fn discover_tex_files_with_aliases(
+    paths: &[PathBuf],
+    all_tex: bool,
+    aliases: &ScanAliases,
+) -> io::Result<Vec<PathBuf>> {
     let mut files = Vec::new();
 
     for path in paths {
@@ -12,17 +23,18 @@ pub fn discover_tex_files(paths: &[PathBuf], all_tex: bool) -> io::Result<Vec<Pa
                     files.push(path.clone());
                 } else if let Some(root) = magic_root_path(path)? {
                     let project_root = root.parent().unwrap_or_else(|| Path::new(""));
-                    collect_reachable_tex_files(project_root, &root, &mut files)?;
+                    collect_reachable_tex_files(project_root, &root, aliases, &mut files)?;
                 } else {
                     let project_root = path.parent().unwrap_or_else(|| Path::new(""));
-                    collect_reachable_tex_files(project_root, path, &mut files)?;
+                    collect_reachable_tex_files(project_root, path, aliases, &mut files)?;
                 }
             }
         } else if path.is_dir() {
             if all_tex {
                 collect_tex_files(path, &mut files)?;
             } else {
-                collect_project_tex_files(path, &mut files)?;
+                let graph = ProjectGraph::analyze_with_aliases(path, aliases)?;
+                files.extend(graph.tex_files_for_lint(false));
             }
         } else {
             return Err(io::Error::new(
@@ -35,23 +47,6 @@ pub fn discover_tex_files(paths: &[PathBuf], all_tex: bool) -> io::Result<Vec<Pa
     files.sort();
     files.dedup();
     Ok(files)
-}
-
-fn collect_project_tex_files(dir: &Path, files: &mut Vec<PathBuf>) -> io::Result<()> {
-    let mut candidates = Vec::new();
-    collect_tex_files(dir, &mut candidates)?;
-
-    let roots = primary_roots(dir, &candidates)?;
-    if roots.is_empty() {
-        files.extend(candidates);
-        return Ok(());
-    }
-
-    for root in roots {
-        collect_reachable_tex_files(dir, &root, files)?;
-    }
-
-    Ok(())
 }
 
 fn collect_tex_files(dir: &Path, files: &mut Vec<PathBuf>) -> io::Result<()> {
@@ -73,70 +68,6 @@ fn is_tex_file(path: &Path) -> bool {
     path.extension()
         .and_then(|extension| extension.to_str())
         .is_some_and(|extension| extension.eq_ignore_ascii_case("tex"))
-}
-
-fn primary_roots(dir: &Path, candidates: &[PathBuf]) -> io::Result<Vec<PathBuf>> {
-    let mut document_roots = Vec::new();
-    for candidate in candidates {
-        let content = fs::read_to_string(candidate)?;
-        if declares_document(&content) {
-            document_roots.push(candidate.clone());
-        }
-    }
-
-    if document_roots.is_empty() {
-        return Ok(Vec::new());
-    }
-
-    let roots_with_bbl: Vec<_> = document_roots
-        .iter()
-        .filter(|path| matching_bbl_path(path).is_file())
-        .cloned()
-        .collect();
-    if !roots_with_bbl.is_empty() {
-        let top_level_roots_with_bbl: Vec<_> = roots_with_bbl
-            .iter()
-            .filter(|path| path.parent() == Some(dir))
-            .cloned()
-            .collect();
-        if !top_level_roots_with_bbl.is_empty() {
-            return Ok(top_level_roots_with_bbl);
-        }
-
-        return Ok(roots_with_bbl);
-    }
-
-    let main_like: Vec<_> = document_roots
-        .iter()
-        .filter(|path| {
-            path.parent() == Some(dir)
-                && path
-                    .file_name()
-                    .and_then(|name| name.to_str())
-                    .is_some_and(is_main_like_name)
-        })
-        .cloned()
-        .collect();
-    if !main_like.is_empty() {
-        return Ok(main_like);
-    }
-
-    let top_level: Vec<_> = document_roots
-        .iter()
-        .filter(|path| path.parent() == Some(dir))
-        .cloned()
-        .collect();
-    if !top_level.is_empty() {
-        return Ok(top_level);
-    }
-
-    Ok(document_roots)
-}
-
-fn matching_bbl_path(path: &Path) -> PathBuf {
-    let mut bbl = path.to_path_buf();
-    bbl.set_extension("bbl");
-    bbl
 }
 
 fn magic_root_path(path: &Path) -> io::Result<Option<PathBuf>> {
@@ -163,6 +94,7 @@ fn magic_root_path(path: &Path) -> io::Result<Option<PathBuf>> {
 fn collect_reachable_tex_files(
     project_root: &Path,
     current_file: &Path,
+    aliases: &ScanAliases,
     files: &mut Vec<PathBuf>,
 ) -> io::Result<()> {
     if files.iter().any(|file| file == current_file) {
@@ -172,18 +104,14 @@ fn collect_reachable_tex_files(
     let content = fs::read_to_string(current_file)?;
     files.push(current_file.to_path_buf());
 
-    for input in find_input_paths(&content) {
+    for input in find_input_paths(&content, aliases) {
         let path = resolve_tex_input(project_root, current_file, &input);
         if path.is_file() {
-            collect_reachable_tex_files(project_root, &path, files)?;
+            collect_reachable_tex_files(project_root, &path, aliases, files)?;
         }
     }
 
     Ok(())
-}
-
-fn declares_document(content: &str) -> bool {
-    content.contains("\\documentclass") || content.contains("\\begin{document}")
 }
 
 fn find_magic_root(content: &str) -> Option<String> {
@@ -209,14 +137,7 @@ fn find_magic_root(content: &str) -> Option<String> {
     None
 }
 
-fn is_main_like_name(name: &str) -> bool {
-    matches!(
-        name.to_ascii_lowercase().as_str(),
-        "main.tex" | "paper.tex" | "article.tex" | "manuscript.tex" | "ms.tex"
-    )
-}
-
-fn find_input_paths(content: &str) -> Vec<String> {
+fn find_input_paths(content: &str, aliases: &ScanAliases) -> Vec<String> {
     let mut paths = Vec::new();
     let mut offset = 0;
 
@@ -232,7 +153,9 @@ fn find_input_paths(content: &str) -> Vec<String> {
             continue;
         };
 
-        if !matches!(name, "input" | "include" | "subfile") {
+        if !matches!(name, "input" | "include" | "subfile")
+            && !aliases.inputs.iter().any(|alias| alias == name)
+        {
             offset = after_name;
             continue;
         }
@@ -289,13 +212,7 @@ fn tex_input_candidates(base: &Path, raw: &Path) -> Vec<PathBuf> {
         candidates.push(raw_path.clone());
     }
 
-    if !raw_path
-        .extension()
-        .and_then(|extension| extension.to_str())
-        .is_some_and(|extension| extension.eq_ignore_ascii_case("tex"))
-    {
-        candidates.push(PathBuf::from(format!("{}.tex", raw_path.display())));
-    }
+    candidates.push(PathBuf::from(format!("{}.tex", raw_path.display())));
 
     candidates
 }
@@ -441,6 +358,10 @@ mod tests {
         fs::write(path, content).expect("failed to write fixture");
     }
 
+    fn canonical(path: &Path) -> PathBuf {
+        path.canonicalize().expect("canonical path")
+    }
+
     #[test]
     fn finds_tex_root_magic_comments() {
         assert_eq!(
@@ -491,7 +412,7 @@ mod tests {
         let files =
             discover_tex_files(std::slice::from_ref(&dir), false).expect("should discover files");
 
-        assert_eq!(files, vec![main]);
+        assert_eq!(files, vec![canonical(&main)]);
     }
 
     #[test]
@@ -505,7 +426,7 @@ mod tests {
         let files =
             discover_tex_files(std::slice::from_ref(&dir), false).expect("should discover files");
 
-        assert_eq!(files, vec![main, section]);
+        assert_eq!(files, vec![canonical(&main), canonical(&section)]);
     }
 
     #[test]
@@ -521,7 +442,10 @@ mod tests {
         let files =
             discover_tex_files(std::slice::from_ref(&dir), false).expect("should discover files");
 
-        assert_eq!(files, vec![main, method, supp]);
+        assert_eq!(
+            files,
+            vec![canonical(&main), canonical(&method), canonical(&supp)]
+        );
     }
 
     #[test]
@@ -537,6 +461,6 @@ mod tests {
         let files =
             discover_tex_files(std::slice::from_ref(&dir), false).expect("should discover files");
 
-        assert_eq!(files, vec![main]);
+        assert_eq!(files, vec![canonical(&main)]);
     }
 }

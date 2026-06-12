@@ -1,15 +1,7 @@
 pub fn enabled_by_default(code: &str) -> bool {
     !matches!(
         code,
-        "FMT001"
-            | "FMT002"
-            | "LBL001"
-            | "TXT003"
-            | "TXT004"
-            | "TXT005"
-            | "CMT001"
-            | "WS001"
-            | "PRJ005"
+        "FMT001" | "FMT002" | "LBL001" | "TXT003" | "TXT004" | "TXT005" | "WS001" | "PRJ005"
     )
 }
 
@@ -57,7 +49,6 @@ mod tests {
         assert!(!code_is_enabled("FMT002", &[], &[], false));
         assert!(!code_is_enabled("TXT003", &[], &[], false));
         assert!(!code_is_enabled("TXT004", &[], &[], false));
-        assert!(!code_is_enabled("CMT001", &[], &[], false));
         assert!(!code_is_enabled("LBL001", &[], &[], false));
         assert!(!code_is_enabled("WS001", &[], &[], false));
     }

@@ -191,6 +191,12 @@ pub fn run_check(options: &CheckOptions) -> Result<CheckResult, ToolError> {
         }
     }
 
+    for diagnostic in &mut diagnostics {
+        if let Some(severity) = severity_override(diagnostic.code, &options.config) {
+            diagnostic.severity = severity;
+        }
+    }
+
     if options.strict {
         for diagnostic in &mut diagnostics {
             if diagnostic.severity == Severity::Warning
@@ -286,6 +292,15 @@ fn code_is_enabled(code: &str, options: &CheckOptions) -> bool {
     }
 
     rule_policy::code_is_enabled(code, &options.select, &options.ignore, options.strict)
+}
+
+fn severity_override(code: &str, config: &LinterConfig) -> Option<Severity> {
+    config
+        .severity
+        .iter()
+        .filter(|(pattern, _)| code.starts_with(pattern.as_str()))
+        .max_by_key(|(pattern, _)| pattern.len())
+        .map(|(_, severity)| *severity)
 }
 
 fn rule_is_enabled(code: &str, strict_only: bool, options: &CheckOptions) -> bool {

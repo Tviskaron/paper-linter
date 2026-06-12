@@ -240,4 +240,19 @@ mod tests {
             vec!["abstract", "keywords"]
         );
     }
+
+    #[test]
+    fn parses_severity_overrides() {
+        let config =
+            parse_toml("[severity]\ntxt = \"error\"\nref001 = \"warning\"\n").expect("parse");
+
+        assert_eq!(
+            config.severity.get("TXT"),
+            Some(&crate::diagnostic::Severity::Error)
+        );
+        assert_eq!(
+            config.severity.get("REF001"),
+            Some(&crate::diagnostic::Severity::Warning)
+        );
+    }
 }

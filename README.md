@@ -1,94 +1,251 @@
-# paper-linter
+# PaperLinter
 
 [![CI](https://github.com/Tviskaron/paper-linter/actions/workflows/ci.yml/badge.svg)](https://github.com/Tviskaron/paper-linter/actions/workflows/ci.yml)
 
-An extremely fast linter for LaTeX papers.
+PaperLinter is a fast, deterministic Rust linter for LaTeX papers. It is built
+for local editing, CI, pre-commit hooks, and batch corpus checks without
+compiling LaTeX by default.
 
-`paper-linter` is designed to be 10-100x faster than existing tools while staying simple to install, easy to run, and useful in editors, CI, and pre-commit hooks.
+<p align="center">
+  <img src="logo/horizontal_logo.png" alt="PaperLinter" width="560">
+</p>
+
 
 ## Highlights
 
-- **Written in Rust**: parallel, memory-safe, no runtime.
-- **Zero configuration**: sensible defaults, with opt-in strict mode.
-- **Single binary, no deps**: drop into CI or pre-commit in seconds.
+- **Single binary**: no Python runtime, TeX installation, database, or network
+  access required for normal linting.
+- **Zero-config defaults**: conservative checks run by default; noisy style and
+  strict checks are opt-in.
+- **Project-aware LaTeX scanning**: follows `\input`, `\include`, and
+  `\subfile`, indexes labels, references, citations, figures, tables, packages,
+  and common build artifacts.
+- **CI-friendly output**: text, JSON, SARIF, and LSP-shaped diagnostics.
+- **Fast by design**: source-only static analysis, stable rule IDs, small
+  deterministic diagnostics.
 
-## What It Checks
+## Quick Start
 
-### References & Citations
+```console
+cargo install --git https://github.com/Tviskaron/paper-linter.git --force
+paper-linter check paper.tex
+```
 
-- Every `\cite{}` key exists in `.bib` or a fallback `.bbl`.
-- Every `.bib` entry is cited.
-- Required fields: author, year, venue.
-- Duplicate bibliography keys and very similar titles with different keys.
-- Roadmap: DOI/URL validation and consistent `\citet` / `\citep` style.
-
-### Figures & Tables
-
-- Every image is `\ref`'d in text.
-- Every `\label` has a reference.
-- Captions are present and assets exist.
-- Roadmap: broken `\ref` targets, placement proximity to mention, resolution and format checks.
-
-### Structure & Formatting
-
-- Sane section hierarchy.
-- Acronyms defined on first use.
-- Placeholder checks: TODO, TBD, Lorem.
-- Roadmap: section-title capitalization, non-breaking space before `\cite`, math-mode consistency.
-
-### Style & Writing
-
-- Repeated words and filler.
-- Very long sentences.
-- Trailing whitespace and comment percentage.
-- Roadmap: passive-voice heuristic, per-venue style presets, LLM-assisted suggestions.
-
-## Example
+Common commands:
 
 ```console
 paper-linter check paper.tex
+paper-linter check . --all-tex
+paper-linter check . --all
+paper-linter check paper.tex --strict
+paper-linter check paper.tex --select FIG,CAP,REF
+paper-linter check paper.tex --ignore TXT
+paper-linter check paper.tex --format json
+paper-linter check paper.tex --format sarif
+paper-linter ready .
+paper-linter doctor .
+paper-linter pack . --dry-run
+paper-linter format . --check
+paper-linter rules
+paper-linter explain FIG001
+```
+
+Example output:
+
+```console
 paper.tex:42:18: warning[TXT001] placeholder text
 checked 1 file(s), 0 error(s), 1 warning(s)
 ```
 
-Current implementation status: the core CLI and rule pipeline are in place, with
-`CIT001`-`CIT011` citation checks and the first Structure & Formatting rules
-implemented:
+## Rule Selection
 
-- `CIT001`-`CIT011`: citation and bibliography consistency/style checks, with
-  `.bbl` fallback for arXiv sources that omit `.bib` files.
-- `CIT009`-`CIT011`: opt-in or `--strict` citation style checks, including
-  collapsible citations, mixed citation command families, and canonical
-  bibliography keys such as `skrynnik2024learn`.
-- `ALG001`: algorithm labels are referenced in text.
-- `FMT001`: missing final newline (opt-in or `--strict`).
-- `FMT002`: repeated blank lines (opt-in or `--strict`).
-- `ENV001`: environment begin/end mismatch.
-- `SEC001`: skipped section hierarchy level.
-- `SEC002`: empty section.
-- `TEX001`: missing non-breaking space before references or citations.
-- `TXT001`: placeholder text.
-- `TXT002`: repeated word.
-- `LBL001`: unused non-float label (opt-in or `--strict`).
-- `WS001`: trailing whitespace (opt-in or `--strict`).
+PaperLinter keeps default mode conservative.
 
-The remaining checks listed above describe the intended MVP and v1.0 roadmap.
+- `--select FIG,CAP`: run only matching rule codes or families.
+- `--ignore TXT`: suppress matching rule codes or families after selection.
+- `--strict`: enable strict-only rules and promote most warnings to errors.
+- `--all`: enable every known rule without promoting warnings to errors.
+- `--all-tex`: scan every `.tex` file under directory inputs instead of only
+  files reachable from the detected root.
+- `--preset arxiv|acl|neurips`: apply a bundled venue/workflow preset.
+
+Use `paper-linter rules` to list known rules and `paper-linter explain CODE` for
+the rationale and suggested fix for one rule.
+
+## What It Checks
+
+### Project Structure
+
+- Missing `\input`, `\include`, and `\subfile` targets.
+- Ambiguous or missing project roots.
+- Orphan `.tex` files that are not reachable from the root document.
+- Package and preamble risks, including option clashes, missing dependencies,
+  and unbalanced preamble braces.
+- Build artifact issues from `.log`, `.blg`, `.aux`, and compile comparison
+  reports when those files are present.
+
+### References, Labels, and Citations
+
+- Missing `\ref`-like targets.
+- Unused labels, with noisy label checks kept opt-in.
+- Missing bibliography keys, unused bibliography entries, duplicate keys, and
+  duplicate bibliography declarations.
+- Citation style issues such as consecutive collapsible citations, mixed
+  citation command families, punctuation before citations, and non-canonical
+  bibliography keys.
+- `.bbl` fallback support for arXiv source bundles that omit `.bib` files.
+
+### Figures, Tables, and Algorithms
+
+- Missing figure/table captions.
+- Missing, unsafe, unsupported, corrupt, or case-mismatched image assets.
+- Orphan figure, table, and algorithm labels.
+- Figure labels missing on real top-level figures.
+- Caption punctuation, image format, image resolution, and image header checks
+  in strict or explicitly selected modes.
+
+### LaTeX, Math, and Source Hygiene
+
+- Environment begin/end mismatches.
+- Legacy LaTeX packages/environments and primitive TeX commands.
+- Double-dollar display math, unbraced multi-character scripts, and raw text
+  operators inside math.
+- Missing non-breaking spaces before references and citations.
+- Missing final newline, repeated blank lines, and trailing whitespace.
+
+### Writing and Paper Polish
+
+- Placeholder text, TODO markers, Lorem Ipsum, and editorial comments.
+- Repeated words.
+- Long sentences, filler words, and passive-voice heuristics in opt-in modes.
+- Section hierarchy problems, empty sections, singleton subdivisions, stacked
+  headings, short sections, and heading style issues.
+
+## Commands
+
+### `check`
+
+Runs lint rules and returns a non-zero exit code only when errors remain after
+selection, suppressions, and baselines.
+
+```console
+paper-linter check path/to/paper.tex
+paper-linter check path/to/project --format sarif
+paper-linter check path/to/project --baseline paper-linter-baseline.json
+paper-linter check path/to/project --update-baseline paper-linter-baseline.json
+```
+
+### `ready`
+
+Prints a compact readiness summary for local review or CI gates.
+
+```console
+paper-linter ready .
+paper-linter ready . --format json
+```
+
+### `doctor`
+
+Explains how PaperLinter sees the project: discovered files, root selection,
+packages, labels, refs, graphics, floats, and include graph facts.
+
+```console
+paper-linter doctor .
+paper-linter doctor . --format json
+```
+
+### `pack`
+
+Performs a read-only submission bundle audit. It lists local assets, missing
+graphics, case mismatches, bibliography/style/class files, and missing includes.
+
+```console
+paper-linter pack . --dry-run
+paper-linter pack . --dry-run --format json
+```
+
+### `format`
+
+Applies or checks safe mechanical formatting only.
+
+```console
+paper-linter format . --check
+paper-linter format . --diff
+paper-linter format . --write
+```
+
+### `index`
+
+Writes the project index to JSON so another run can reuse it.
+
+```console
+paper-linter index paper.tex --output project-index.json
+paper-linter check paper.tex --project-index project-index.json
+```
+
+### `suggest`
+
+Prints targeted suggestions for supported rules.
+
+```console
+paper-linter suggest paper.tex --rule TXT003
+```
+
+## Configuration
+
+PaperLinter works without configuration. Optional configuration files and
+presets can enable aliases, rule families, thresholds, and bibliography policy.
+
+```console
+paper-linter check . --config paper-linter.toml
+paper-linter check . --preset arxiv
+```
+
+Example:
+
+```toml
+enable = ["FIG", "REF"]
+disable = ["TXT005"]
+
+[aliases]
+ref = ["figref", "secref"]
+cite = ["mycite"]
+input = ["subimport"]
+graphic = ["plotfile"]
+
+[bibliography]
+forbidden_fields = ["file", "abstract"]
+```
+
+Inline suppressions:
+
+```tex
+% paper-linter-ignore-next-line FIG001
+\includegraphics{generated-at-build-time}
+
+\caption{Draft caption} % paper-linter-ignore-line CAP002
+
+% paper-linter-ignore-file TXT
+```
+
+## Output Formats
+
+- `text`: compact terminal output.
+- `json`: machine-readable diagnostics and summary.
+- `sarif`: GitHub code scanning and CI integrations.
+- `lsp`: editor-friendly diagnostic payloads.
 
 ## Installation
 
-Commands below are shown without shell prompt markers so they can be copied
-directly.
-
 ### Requirements
 
-- Rust and Cargo. Install them from <https://rustup.rs/> if `cargo --version`
-  does not work.
-- SSH access to GitHub if installing from the private Git URL.
+- Rust and Cargo. Install from <https://rustup.rs/> if `cargo --version` does
+  not work.
 
-### Repository install
+### Cargo
 
 ```console
-cargo install --git ssh://git@github.com/Tviskaron/paper-linter.git --force
+cargo install --git https://github.com/Tviskaron/paper-linter.git --force
 ```
 
 Cargo installs binaries into `~/.cargo/bin`. If `paper-linter` is not found,
@@ -114,57 +271,27 @@ For fish:
 fish_add_path "$HOME/.cargo/bin"
 ```
 
-Check the install:
-
-```console
-paper-linter --help
-paper-linter check paper.tex
-```
-
-### Repository installer script
-
-The installer runs `cargo install`, checks where the binary was installed, and
-helps add Cargo's bin directory to your shell `PATH`.
-
-```console
-git clone git@github.com:Tviskaron/paper-linter.git
-cd paper-linter
-./install.sh --yes
-```
-
-### Public repo one-liner
-
-If the repository is public, the installer can also be run directly from GitHub:
+### Installer Script
 
 ```console
 curl -fsSL https://raw.githubusercontent.com/Tviskaron/paper-linter/main/install.sh | sh -s -- --yes
 ```
 
-### From source
-
-From a local checkout:
+Or clone the public repository first:
 
 ```console
-git clone git@github.com:Tviskaron/paper-linter.git
+git clone https://github.com/Tviskaron/paper-linter.git
+cd paper-linter
+./install.sh --yes
+```
+
+### From Source
+
+```console
+git clone https://github.com/Tviskaron/paper-linter.git
 cd paper-linter
 cargo install --path .
 ```
-
-Run the linter:
-
-```console
-paper-linter check paper.tex
-paper-linter check paper.tex --strict
-paper-linter check paper.tex --format json
-paper-linter check . --select WS
-paper-linter check . --all-tex
-paper-linter check paper.tex refs.bib --select CIT
-```
-
-For directory inputs, `paper-linter` follows likely root files such as
-`main.tex` through `\input`, `\include`, and `\subfile` references. Use
-`--all-tex` to scan every `.tex` file recursively, including templates, old
-drafts, and samples.
 
 For development, run without installing:
 
@@ -172,9 +299,9 @@ For development, run without installing:
 cargo run -- check paper.tex
 ```
 
-### Verification
+## Development
 
-Before committing changes, run:
+Before committing changes:
 
 ```console
 cargo fmt --all --check
@@ -183,62 +310,35 @@ cargo clippy --all-targets --all-features --locked -- -D warnings
 cargo test --all --locked
 ```
 
-GitHub Actions runs the same fast gate on pushes and pull requests, plus a
-local install smoke test. Real-paper corpus checks stay manual so the required
-CI remains deterministic and quick.
+CI runs the same fast gate on pushes and pull requests. Large real-paper corpus
+checks remain manual so required CI stays deterministic and quick.
 
-For manual real-paper smoke tests, collect local arXiv sources into the ignored
-`sample-corpus/` directory:
+Manual arXiv smoke test:
 
 ```console
 scripts/fetch_arxiv_corpus.sh 1706.03762 1810.04805
 cargo run -- check sample-corpus/1706.03762 --select CIT
 ```
 
-## Output Formats
+## Adding Rules
 
-- **CLI**: colored terminal output.
-- **JSON**: machine-readable diagnostics.
-- **SARIF**: GitHub Actions integration.
-- **LSP**: editor diagnostics, including VS Code.
+File-local rules live in `src/rules/` and implement `Rule`. Project-aware rules
+implement `ProjectRule` or `GraphProjectRule` and should use the scanner,
+project index, and include graph instead of ad hoc whole-file regexes.
 
-Current implementation supports text and JSON output. SARIF and LSP are roadmap
-items.
+Checklist:
 
-## Adding a Rule Module
+- Keep the rule source-only, deterministic, and non-panicking on malformed TeX.
+- Preserve exact file, line, and column positions when possible.
+- Prefer conservative defaults; put noisy style checks behind `--strict`,
+  `--all`, presets, or explicit `--select`.
+- Add focused unit tests and at least one CLI/integration regression for user
+  visible behavior.
+- Add minimized fixtures for real-paper false-positive fixes.
+- Register rule metadata in `src/rules/mod.rs` so `rules`, `explain`, JSON,
+  SARIF, and LSP outputs stay complete.
 
-File-local rules live in `src/rules/` and implement the `Rule` trait:
-
-```rust
-pub trait Rule: Sync {
-    fn code(&self) -> &'static str;
-    fn name(&self) -> &'static str;
-    fn check_file(&self, path: &Path, content: &str) -> Vec<Diagnostic>;
-}
-```
-
-To add a new rule:
-
-1. Create a new file in `src/rules/`, for example `txt001.rs`.
-2. Define a rule struct and implement `Rule` for it.
-3. Return diagnostics with `Diagnostic::new(...)`.
-4. Register the rule in `src/rules/mod.rs` by adding the module, static rule
-   value, and entry in `RULES`.
-5. Add unit tests beside the rule and CLI/integration tests if the rule affects
-   command behavior.
-6. Add a minimized fixture under `fixtures/papers/` when the behavior comes
-   from a real paper or a multi-file project shape.
-7. Run the verification commands above.
-
-Testing checklist for rule changes:
-
-- One focused unit test for detector logic.
-- One negative test for a known false-positive shape.
-- One CLI/integration test when `--select`, `--ignore`, `--strict`, JSON
-  output, project discovery, or exit codes are affected.
-- One minimized paper fixture for real-paper regressions.
-
-Minimal pattern:
+Minimal file-local pattern:
 
 ```rust
 use std::path::Path;
@@ -254,41 +354,34 @@ impl Rule for MyRule {
     }
 
     fn name(&self) -> &'static str {
-        "short rule name"
+        "short-rule-name"
     }
 
     fn check_file(&self, path: &Path, content: &str) -> Vec<Diagnostic> {
-        let mut diagnostics = Vec::new();
-
-        for (index, line) in content.lines().enumerate() {
-            if line.contains("TODO") {
-                diagnostics.push(Diagnostic::new(
+        content
+            .lines()
+            .enumerate()
+            .filter(|(_, line)| line.contains("TODO"))
+            .map(|(index, _)| {
+                Diagnostic::new(
                     self.code(),
                     Severity::Warning,
                     "TODO left in paper",
                     path,
                     index + 1,
                     1,
-                ));
-            }
-        }
-
-        diagnostics
+                )
+            })
+            .collect()
     }
 }
 ```
 
-Keep new modules fast and source-only by default: scan text, preserve line and
-column positions, avoid invoking TeX, avoid network access, and leave expensive
-checks for explicit future commands.
+## Design Principles
 
-For project-level checks that need multiple files, follow the abstraction tree
-in `DESIGN_NOTES.md`. The citation checker shows the intended subsystem shape:
-keep a small facade/orchestrator, split scanners/parsers/resolvers/analysis into
-focused private submodules, return normal `Diagnostic` values, and avoid adding
-new checker special cases when a project-rule registry can own the dispatch.
-
-## Roadmap
-
-- **MVP**: v0.1
-- **Full roadmap**: v1.0
+- Do not compile LaTeX for normal linting.
+- Do not implement a full TeX interpreter.
+- Prefer reusable scanners, events, indexes, and rule modules over one-off
+  regular expressions.
+- Default mode should be low-noise and suitable for CI.
+- Strict, venue-specific, or subjective checks must be opt-in.

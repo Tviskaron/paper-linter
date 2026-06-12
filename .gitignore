@@ -30,6 +30,9 @@ tmp/
 # Local Hermes/Codex run artifacts
 .cache/
 
+# Local archives of scratch notes and run reports
+.cache/
+
 # Local comparative analysis notes
 notes.md
 

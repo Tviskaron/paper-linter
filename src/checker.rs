@@ -136,8 +136,9 @@ pub fn run_check(options: &CheckOptions) -> Result<CheckResult, ToolError> {
     }
 
     if ProjectGraph::should_analyze(&options.paths) {
-        let graphs = ProjectGraph::analyze_paths(&options.paths)
-            .map_err(|source| ToolError::Io { path: None, source })?;
+        let graphs =
+            ProjectGraph::analyze_paths_with_aliases(&options.paths, &options.config.aliases)
+                .map_err(|source| ToolError::Io { path: None, source })?;
         for graph in graphs {
             for rule in all_graph_project_rules() {
                 if !rule_is_enabled(rule.code(), false, options) {

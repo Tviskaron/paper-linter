@@ -2,9 +2,18 @@ use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
 
+use crate::latex::scan::ScanAliases;
 use crate::project_graph::ProjectGraph;
 
 pub fn discover_tex_files(paths: &[PathBuf], all_tex: bool) -> io::Result<Vec<PathBuf>> {
+    discover_tex_files_with_aliases(paths, all_tex, &ScanAliases::default())
+}
+
+pub fn discover_tex_files_with_aliases(
+    paths: &[PathBuf],
+    all_tex: bool,
+    aliases: &ScanAliases,
+) -> io::Result<Vec<PathBuf>> {
     let mut files = Vec::new();
 
     for path in paths {
@@ -14,17 +23,17 @@ pub fn discover_tex_files(paths: &[PathBuf], all_tex: bool) -> io::Result<Vec<Pa
                     files.push(path.clone());
                 } else if let Some(root) = magic_root_path(path)? {
                     let project_root = root.parent().unwrap_or_else(|| Path::new(""));
-                    collect_reachable_tex_files(project_root, &root, &mut files)?;
+                    collect_reachable_tex_files(project_root, &root, aliases, &mut files)?;
                 } else {
                     let project_root = path.parent().unwrap_or_else(|| Path::new(""));
-                    collect_reachable_tex_files(project_root, path, &mut files)?;
+                    collect_reachable_tex_files(project_root, path, aliases, &mut files)?;
                 }
             }
         } else if path.is_dir() {
             if all_tex {
                 collect_tex_files(path, &mut files)?;
             } else {
-                let graph = ProjectGraph::analyze(path)?;
+                let graph = ProjectGraph::analyze_with_aliases(path, aliases)?;
                 files.extend(graph.tex_files_for_lint(false));
             }
         } else {
@@ -85,6 +94,7 @@ fn magic_root_path(path: &Path) -> io::Result<Option<PathBuf>> {
 fn collect_reachable_tex_files(
     project_root: &Path,
     current_file: &Path,
+    aliases: &ScanAliases,
     files: &mut Vec<PathBuf>,
 ) -> io::Result<()> {
     if files.iter().any(|file| file == current_file) {
@@ -94,10 +104,10 @@ fn collect_reachable_tex_files(
     let content = fs::read_to_string(current_file)?;
     files.push(current_file.to_path_buf());
 
-    for input in find_input_paths(&content) {
+    for input in find_input_paths(&content, aliases) {
         let path = resolve_tex_input(project_root, current_file, &input);
         if path.is_file() {
-            collect_reachable_tex_files(project_root, &path, files)?;
+            collect_reachable_tex_files(project_root, &path, aliases, files)?;
         }
     }
 
@@ -127,7 +137,7 @@ fn find_magic_root(content: &str) -> Option<String> {
     None
 }
 
-fn find_input_paths(content: &str) -> Vec<String> {
+fn find_input_paths(content: &str, aliases: &ScanAliases) -> Vec<String> {
     let mut paths = Vec::new();
     let mut offset = 0;
 
@@ -143,7 +153,9 @@ fn find_input_paths(content: &str) -> Vec<String> {
             continue;
         };
 
-        if !matches!(name, "input" | "include" | "subfile") {
+        if !matches!(name, "input" | "include" | "subfile")
+            && !aliases.inputs.iter().any(|alias| alias == name)
+        {
             offset = after_name;
             continue;
         }
@@ -200,13 +212,7 @@ fn tex_input_candidates(base: &Path, raw: &Path) -> Vec<PathBuf> {
         candidates.push(raw_path.clone());
     }
 
-    if !raw_path
-        .extension()
-        .and_then(|extension| extension.to_str())
-        .is_some_and(|extension| extension.eq_ignore_ascii_case("tex"))
-    {
-        candidates.push(PathBuf::from(format!("{}.tex", raw_path.display())));
-    }
+    candidates.push(PathBuf::from(format!("{}.tex", raw_path.display())));
 
     candidates
 }

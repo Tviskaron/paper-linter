@@ -6,7 +6,7 @@ use crate::artifacts::{check_artifacts, compile_regression_diagnostics};
 use crate::baseline::{Baseline, BaselineError};
 use crate::config::LinterConfig;
 use crate::diagnostic::{Diagnostic, Severity};
-use crate::discovery::discover_tex_files;
+use crate::discovery::{discover_tex_files, discover_tex_files_with_aliases};
 use crate::project::ProjectIndex;
 use crate::project_graph::ProjectGraph;
 use crate::rule_policy;
@@ -227,7 +227,7 @@ pub fn build_project_index(
         return Ok(None);
     }
 
-    ProjectIndex::build(paths, &files)
+    ProjectIndex::build_project_files(paths, &files)
         .map(Some)
         .map_err(|source| ToolError::Io { path: None, source })
 }
@@ -242,13 +242,14 @@ fn load_project_index(options: &CheckOptions) -> Result<Option<ProjectIndex>, To
             });
     }
 
-    let files = discover_tex_files(&options.paths, options.all_tex)
-        .map_err(|source| ToolError::Io { path: None, source })?;
+    let files =
+        discover_tex_files_with_aliases(&options.paths, options.all_tex, &options.config.aliases)
+            .map_err(|source| ToolError::Io { path: None, source })?;
     if files.is_empty() {
         return Ok(None);
     }
 
-    ProjectIndex::build_with_aliases(&options.paths, &files, &options.config.aliases)
+    ProjectIndex::build_project_files_with_aliases(&options.paths, &files, &options.config.aliases)
         .map(Some)
         .map_err(|source| ToolError::Io { path: None, source })
 }

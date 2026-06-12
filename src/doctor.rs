@@ -7,7 +7,7 @@ use crate::project_graph::ProjectGraph;
 pub fn run_doctor(path: &Path, json: bool) -> io::Result<()> {
     let graph = ProjectGraph::analyze(path)?;
     let discovered = graph.reachable.iter().cloned().collect::<Vec<_>>();
-    let index = ProjectIndex::build(&[path.to_path_buf()], &discovered).ok();
+    let index = ProjectIndex::build_project_files(&[path.to_path_buf()], &discovered).ok();
 
     if json {
         let payload = serde_json::json!({

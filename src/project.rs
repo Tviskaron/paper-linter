@@ -40,10 +40,35 @@ impl ProjectIndex {
         Self::build_with_aliases(input_paths, discovered_files, &ScanAliases::default())
     }
 
+    pub fn build_project_files(
+        input_paths: &[PathBuf],
+        project_files: &[PathBuf],
+    ) -> io::Result<Self> {
+        Self::build_project_files_with_aliases(input_paths, project_files, &ScanAliases::default())
+    }
+
     pub fn build_with_aliases(
         input_paths: &[PathBuf],
         discovered_files: &[PathBuf],
         aliases: &ScanAliases,
+    ) -> io::Result<Self> {
+        Self::build_inner(input_paths, discovered_files, aliases, None)
+    }
+
+    pub fn build_project_files_with_aliases(
+        input_paths: &[PathBuf],
+        project_files: &[PathBuf],
+        aliases: &ScanAliases,
+    ) -> io::Result<Self> {
+        let allowed_files = canonical_file_set(project_files)?;
+        Self::build_inner(input_paths, project_files, aliases, Some(allowed_files))
+    }
+
+    fn build_inner(
+        input_paths: &[PathBuf],
+        discovered_files: &[PathBuf],
+        aliases: &ScanAliases,
+        allowed_files: Option<BTreeSet<PathBuf>>,
     ) -> io::Result<Self> {
         let root = infer_project_root(input_paths, discovered_files)?;
         let mut effective_aliases = aliases.clone();
@@ -56,6 +81,7 @@ impl ProjectIndex {
         let mut builder = ProjectBuilder {
             root,
             aliases: effective_aliases,
+            allowed_files,
             seen: BTreeSet::new(),
             document_ended: BTreeMap::new(),
             files: Vec::new(),
@@ -190,6 +216,7 @@ fn scan_latex_with_project_aliases(
 struct ProjectBuilder {
     root: PathBuf,
     aliases: ScanAliases,
+    allowed_files: Option<BTreeSet<PathBuf>>,
     seen: BTreeSet<PathBuf>,
     document_ended: BTreeMap<PathBuf, bool>,
     files: Vec<SourceFile>,
@@ -204,9 +231,18 @@ struct ProjectBuilder {
 }
 
 impl ProjectBuilder {
+    fn allows_file(&self, path: &Path) -> bool {
+        self.allowed_files
+            .as_ref()
+            .is_none_or(|allowed| allowed.contains(path))
+    }
+
     fn add_file(&mut self, path: &Path) -> io::Result<bool> {
         let canonical = canonicalize_existing(path)?;
         if !canonical.starts_with(&self.root) {
+            return Ok(false);
+        }
+        if !self.allows_file(&canonical) {
             return Ok(false);
         }
         if !self.seen.insert(canonical.clone()) {
@@ -509,6 +545,13 @@ fn canonicalize_existing(path: &Path) -> io::Result<PathBuf> {
     path.canonicalize()
 }
 
+fn canonical_file_set(paths: &[PathBuf]) -> io::Result<BTreeSet<PathBuf>> {
+    paths
+        .iter()
+        .map(|path| path.canonicalize())
+        .collect::<io::Result<_>>()
+}
+
 #[cfg(test)]
 mod tests {
     use std::fs;
@@ -559,6 +602,25 @@ mod tests {
         assert!(index.is_referenced("sec:method"));
         assert!(index.has_label("sec:method"));
         assert!(!index.has_label("sec:missing"));
+    }
+
+    #[test]
+    fn project_file_build_does_not_expand_outside_given_file_set() {
+        let dir = temp_project("restricted-files");
+        let main = dir.join("paper.tex");
+        let method = dir.join("sections/method.tex");
+        write(&main, "\\input{sections/method}\n\\label{sec:main}\n");
+        write(&method, "\\label{sec:method}\n");
+
+        let index = ProjectIndex::build_project_files(
+            std::slice::from_ref(&main),
+            std::slice::from_ref(&main),
+        )
+        .expect("project should index");
+
+        assert_eq!(index.files.len(), 1);
+        assert!(index.has_label("sec:main"));
+        assert!(!index.has_label("sec:method"));
     }
 
     #[test]

@@ -3,6 +3,7 @@ use serde_json::json;
 use std::collections::BTreeMap;
 use std::env;
 use std::path::{Path, PathBuf};
+use std::time::Duration;
 
 use crate::baseline::diagnostic_fingerprint;
 use crate::checker::CheckResult;
@@ -128,7 +129,7 @@ pub fn render_text(result: &CheckResult) -> String {
     output
 }
 
-pub fn render_terminal(result: &CheckResult) -> String {
+pub fn render_terminal(result: &CheckResult, elapsed: Duration) -> String {
     let mut output = String::new();
 
     for diagnostic in &result.diagnostics {
@@ -172,11 +173,15 @@ pub fn render_terminal(result: &CheckResult) -> String {
     };
 
     output.push_str(&format!(
-        "{status} {files} passed · {errors_text}, {warnings_text}\n",
+        "{status} {files} passed · {errors_text}, {warnings_text} {green}{bold}in {elapsed}{reset}\n",
         status = status,
         files = result.files_checked,
         errors_text = terminal_count(errors, "err", RED),
-        warnings_text = terminal_count(warnings, "warn", YELLOW)
+        warnings_text = terminal_count(warnings, "warn", YELLOW),
+        green = GREEN,
+        bold = BOLD,
+        elapsed = format_duration(elapsed),
+        reset = RESET
     ));
 
     output
@@ -212,6 +217,17 @@ fn push_file_locations(
                 location_indent = location_indent
             ));
         }
+    }
+}
+
+fn format_duration(duration: Duration) -> String {
+    let seconds = duration.as_secs_f64();
+    if seconds < 10.0 {
+        format!("{seconds:.2}s")
+    } else if seconds < 100.0 {
+        format!("{seconds:.1}s")
+    } else {
+        format!("{}s", duration.as_secs())
     }
 }
 
@@ -646,11 +662,15 @@ fn display_path(path: &Path) -> String {
 #[cfg(test)]
 mod tests {
     use std::path::PathBuf;
+    use std::time::Duration;
 
     use crate::checker::CheckResult;
     use crate::diagnostic::{Diagnostic, Severity};
 
-    use super::{display_path, render_ready_json, render_ready_text, render_sarif, render_text};
+    use super::{
+        display_path, format_duration, render_ready_json, render_ready_text, render_sarif,
+        render_text,
+    };
 
     #[test]
     fn text_output_uses_paths_relative_to_current_directory() {
@@ -722,6 +742,13 @@ mod tests {
         let path = PathBuf::from("/external/paper/root.tex");
 
         assert_eq!(display_path(&path), "/external/paper/root.tex");
+    }
+
+    #[test]
+    fn terminal_duration_format_is_compact() {
+        assert_eq!(format_duration(Duration::from_millis(70)), "0.07s");
+        assert_eq!(format_duration(Duration::from_millis(12_340)), "12.3s");
+        assert_eq!(format_duration(Duration::from_secs(123)), "123s");
     }
 
     #[test]

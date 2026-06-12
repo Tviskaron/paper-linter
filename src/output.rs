@@ -68,10 +68,6 @@ pub fn render_text(result: &CheckResult) -> String {
     for (code, diagnostics) in groups {
         let severity = diagnostics[0].severity.as_str();
         let name = rule_name(code);
-        output.push_str(&format!(
-            "\n{severity}[{code}] {name} ({})\n",
-            diagnostics.len()
-        ));
 
         let mut by_message: BTreeMap<DiagnosticMessageKey, Vec<&Diagnostic>> = BTreeMap::new();
         for diagnostic in diagnostics {
@@ -81,32 +77,68 @@ pub fn render_text(result: &CheckResult) -> String {
                 .push(diagnostic);
         }
 
+        let single_message_group = by_message.len() == 1;
+        if single_message_group {
+            let (message, diagnostics) = by_message.into_iter().next().expect("one group");
+            output.push_str(&format!(
+                "\n{} ({})\n",
+                message.format(severity, code),
+                diagnostics.len()
+            ));
+            push_file_locations(&mut output, diagnostics, 2, 4);
+            continue;
+        }
+
+        output.push_str(&format!(
+            "\n{severity}[{code}] {name} ({})\n",
+            by_message
+                .values()
+                .map(|diagnostics| diagnostics.len())
+                .sum::<usize>()
+        ));
+
         for (message, diagnostics) in by_message {
             output.push_str("  ");
             output.push_str(&message.format(severity, code));
             output.push('\n');
-
-            let mut by_file: BTreeMap<&PathBuf, Vec<&Diagnostic>> = BTreeMap::new();
-            for diagnostic in diagnostics {
-                by_file
-                    .entry(&diagnostic.file)
-                    .or_default()
-                    .push(diagnostic);
-            }
-
-            for (file, diagnostics) in by_file {
-                output.push_str(&format!("    {}\n", display_path(file)));
-                for diagnostic in diagnostics {
-                    output.push_str(&format!(
-                        "      {}:{}\n",
-                        diagnostic.line, diagnostic.column
-                    ));
-                }
-            }
+            push_file_locations(&mut output, diagnostics, 4, 6);
         }
     }
 
     output
+}
+
+fn push_file_locations(
+    output: &mut String,
+    diagnostics: Vec<&Diagnostic>,
+    file_indent: usize,
+    location_indent: usize,
+) {
+    let mut by_file: BTreeMap<&PathBuf, Vec<&Diagnostic>> = BTreeMap::new();
+    for diagnostic in diagnostics {
+        by_file
+            .entry(&diagnostic.file)
+            .or_default()
+            .push(diagnostic);
+    }
+
+    for (file, diagnostics) in by_file {
+        output.push_str(&format!(
+            "{:file_indent$}{}\n",
+            "",
+            display_path(file),
+            file_indent = file_indent
+        ));
+        for diagnostic in diagnostics {
+            output.push_str(&format!(
+                "{:location_indent$}{}:{}\n",
+                "",
+                diagnostic.line,
+                diagnostic.column,
+                location_indent = location_indent
+            ));
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
@@ -529,13 +561,45 @@ mod tests {
 
         assert!(text.starts_with("Summary\nchecked 1 file(s), 0 error(s), 1 warning(s)"));
         assert!(text.contains("By Rule\n- warning[LBL001] unused label: 1\n"));
-        assert!(text.contains("\nwarning[LBL001] unused label (1)\n"));
-        assert!(
-            text.contains("  warning[LBL001] label 'sec:problem_statement' is never referenced\n")
-        );
-        assert!(text.contains("    tmp/sample-paper/root.tex\n"));
-        assert!(text.contains("      180:29\n"));
+        assert!(text
+            .contains("\nwarning[LBL001] label 'sec:problem_statement' is never referenced (1)\n"));
+        assert!(!text.contains("\nwarning[LBL001] unused label (1)\n"));
+        assert!(text.contains("  tmp/sample-paper/root.tex\n"));
+        assert!(text.contains("    180:29\n"));
         assert!(!text.contains("/tmp/sample-paper/root.tex:180:29"));
+    }
+
+    #[test]
+    fn text_output_keeps_message_groups_when_messages_differ() {
+        let path = std::env::current_dir().unwrap().join("tmp/main.tex");
+        let result = CheckResult {
+            diagnostics: vec![
+                Diagnostic::new(
+                    "TXT004",
+                    Severity::Warning,
+                    "filler word 'very'",
+                    &path,
+                    1,
+                    2,
+                ),
+                Diagnostic::new(
+                    "TXT004",
+                    Severity::Warning,
+                    "filler word 'just'",
+                    &path,
+                    3,
+                    4,
+                ),
+            ],
+            files_checked: 1,
+        };
+
+        let text = render_text(&result);
+
+        assert!(text.contains("warning[TXT004] filler word (2)"));
+        assert!(text.contains("  warning[TXT004] filler word 'just'\n"));
+        assert!(text.contains("  warning[TXT004] filler word 'very'\n"));
+        assert!(text.contains("    tmp/main.tex\n"));
     }
 
     #[test]

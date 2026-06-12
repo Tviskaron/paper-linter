@@ -113,7 +113,7 @@ pub fn render_text(result: &CheckResult) -> String {
 
         for (message, diagnostics) in by_message {
             output.push_str(&format!("\n#### {}\n\n", message.format(severity, code)));
-            push_file_locations(&mut output, diagnostics, 4, 6);
+            push_file_locations(&mut output, diagnostics, 0, 2);
         }
     }
 
@@ -618,7 +618,7 @@ mod tests {
         assert!(text.contains("### warning[TXT004] filler word (2)"));
         assert!(text.contains("#### warning[TXT004] filler word 'just'\n"));
         assert!(text.contains("#### warning[TXT004] filler word 'very'\n"));
-        assert!(text.contains("    - `tmp/main.tex`\n"));
+        assert!(text.contains("- `tmp/main.tex`\n"));
     }
 
     #[test]

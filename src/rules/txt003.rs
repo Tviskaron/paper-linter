@@ -37,10 +37,7 @@ impl Rule for LongSentence {
                 Diagnostic::new(
                     self.code(),
                     Severity::Warning,
-                    format!(
-                        "sentence has {} words (threshold {})",
-                        sentence.word_count, MAX_WORDS
-                    ),
+                    format!("sentence exceeds {MAX_WORDS} words"),
                     path,
                     sentence.line,
                     sentence.start_column,
@@ -65,6 +62,7 @@ mod tests {
         let diagnostics = LongSentence.check_file(Path::new("paper.tex"), text);
         assert!(!diagnostics.is_empty());
         assert_eq!(diagnostics[0].code, "TXT003");
+        assert_eq!(diagnostics[0].message, "sentence exceeds 40 words");
     }
 
     #[test]

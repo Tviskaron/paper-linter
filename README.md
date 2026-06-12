@@ -304,6 +304,20 @@ For development, run without installing:
 cargo run -- check paper.tex
 ```
 
+## Optional: Suggestion and Fixture Scripts
+
+Optional Python tooling lives under `scripts/` and does not affect default
+`check` behavior:
+
+- [`scripts/README.md`](scripts/README.md) — arXiv compile/compare helpers and env vars
+- [`scripts/ml/README.md`](scripts/ml/README.md) — LoRA training and `suggest --ml-model`
+- [`scripts/llm_validation/README.md`](scripts/llm_validation/README.md) — Ollama benchmark harness
+
+```console
+paper-linter suggest paper.tex --rule TXT001
+paper-linter suggest paper.tex --ml-model path/to/adapter
+```
+
 ## Development
 
 Before committing changes:

@@ -14,6 +14,7 @@ pub mod project_graph;
 pub mod rule_policy;
 pub mod rules;
 pub mod suggest;
+pub mod suggest_ml;
 pub mod suppressions;
 
 pub use checker::{run_check, CheckOptions, CheckResult, ToolError};

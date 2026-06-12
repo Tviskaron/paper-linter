@@ -33,6 +33,15 @@ tmp/
 # Local archives of scratch notes and run reports
 .cache/
 
+# Validation pipeline run artifacts
+llm_validation/runs/
+llm_validation/baseline/
+
+# Fine-tuned model weights and large generated datasets
+data/ml/models/
+data/ml/suggest_dataset/
+data/ml/log_diagnosis_dataset/
+
 # Local comparative analysis notes
 notes.md
 

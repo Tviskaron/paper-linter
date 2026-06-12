@@ -3,6 +3,7 @@ pub mod baseline;
 pub mod checker;
 pub mod cli;
 pub mod config;
+pub mod demo;
 pub mod diagnostic;
 pub mod discovery;
 pub mod doctor;

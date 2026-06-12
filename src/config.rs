@@ -11,6 +11,7 @@ use crate::rule_policy;
 pub struct LinterConfig {
     pub enable: Vec<String>,
     pub disable: Vec<String>,
+    pub strict: bool,
     pub thresholds: BTreeMap<String, String>,
     pub severity: BTreeMap<String, Severity>,
     pub aliases: ScanAliases,
@@ -89,6 +90,9 @@ fn parse_toml(content: &str) -> io::Result<LinterConfig> {
             "rules" if key == "disable" => {
                 config.disable = parse_string_list(&value);
             }
+            "options" if key == "strict" => {
+                config.strict = parse_bool(&value);
+            }
             "thresholds" => {
                 config.thresholds.insert(key.to_string(), value);
             }
@@ -141,6 +145,13 @@ fn parse_severity(value: &str) -> Option<Severity> {
         "warning" => Some(Severity::Warning),
         _ => None,
     }
+}
+
+fn parse_bool(value: &str) -> bool {
+    matches!(
+        value.to_ascii_lowercase().as_str(),
+        "true" | "1" | "yes" | "on"
+    )
 }
 
 pub fn append_missing(target: &mut Vec<String>, source: &[String]) {
@@ -215,18 +226,33 @@ mod tests {
     }
 
     #[test]
-    fn loads_arxiv_preset() {
-        let config = super::LinterConfig::load_preset("arxiv").expect("preset");
+    fn parses_preset_options() {
+        let config = parse_toml("[options]\nstrict = true\n").expect("parse");
+
+        assert!(config.strict);
+    }
+
+    #[test]
+    fn loads_essential_preset() {
+        let config = super::LinterConfig::load_preset("essential").expect("preset");
         assert!(config.enable.iter().any(|code| code == "CIT012"));
         assert!(config.enable.iter().any(|code| code == "PKG001"));
     }
 
     #[test]
-    fn loads_neurips_and_acl_presets() {
-        let neurips = super::LinterConfig::load_preset("neurips").expect("neurips");
-        let acl = super::LinterConfig::load_preset("acl").expect("acl");
-        assert!(neurips.enable.iter().any(|code| code == "PKG002"));
-        assert!(acl.enable.iter().any(|code| code == "TEX002"));
+    fn loads_strict_and_standard_presets() {
+        let strict = super::LinterConfig::load_preset("strict").expect("strict");
+        let standard = super::LinterConfig::load_preset("standard").expect("standard");
+        assert!(strict.strict);
+        assert!(strict.enable.iter().any(|code| code == "PKG002"));
+        assert!(standard.enable.iter().any(|code| code == "TEX002"));
+    }
+
+    #[test]
+    fn loads_polish_preset() {
+        let polish = super::LinterConfig::load_preset("polish").expect("polish");
+        assert!(polish.enable.iter().any(|code| code == "TXT001"));
+        assert!(!polish.enable.iter().any(|code| code == "CMT001"));
     }
 
     #[test]

@@ -687,6 +687,7 @@ mod tests {
                 29,
             )],
             files_checked: 1,
+            checked_files: Vec::new(),
         };
 
         let text = render_text(&result);
@@ -727,6 +728,7 @@ mod tests {
                 ),
             ],
             files_checked: 1,
+            checked_files: Vec::new(),
         };
 
         let text = render_text(&result);
@@ -765,6 +767,7 @@ mod tests {
             )
             .with_hint("remove trailing whitespace")],
             files_checked: 1,
+            checked_files: Vec::new(),
         };
 
         let value: serde_json::Value =
@@ -818,6 +821,7 @@ mod tests {
                 ),
             ],
             files_checked: 1,
+            checked_files: Vec::new(),
         };
 
         let text = render_ready_text(&result);

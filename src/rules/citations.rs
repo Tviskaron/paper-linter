@@ -247,21 +247,44 @@ pub fn check_project(
         .chain(bbl_keys.iter().map(String::as_str))
         .chain(source_bibitem_keys.iter().map(String::as_str))
         .collect();
+    let case_folded_known_keys = case_folded_key_map(&known_keys);
 
     for citation in &citations {
         if citation.key == "*" {
             continue;
         }
 
-        if !known_keys.contains(citation.key.as_str()) {
-            diagnostics.push(Diagnostic::new(
-                "CIT001",
-                Severity::Error,
-                format!("citation key '{}' not found in bibliography", citation.key),
-                &citation.file,
-                citation.line,
-                citation.column,
-            ));
+        if known_keys.contains(citation.key.as_str()) {
+            continue;
+        }
+
+        match case_folded_known_keys.get(&citation.key.to_ascii_lowercase()) {
+            Some(matches) if matches.len() == 1 => {
+                diagnostics.push(
+                    Diagnostic::new(
+                        "CIT013",
+                        Severity::Warning,
+                        format!(
+                            "citation key '{}' differs only by case from bibliography key '{}'",
+                            citation.key, matches[0]
+                        ),
+                        &citation.file,
+                        citation.line,
+                        citation.column,
+                    )
+                    .with_hint(format!("use \\cite{{{}}}", matches[0])),
+                );
+            }
+            _ => {
+                diagnostics.push(Diagnostic::new(
+                    "CIT001",
+                    Severity::Error,
+                    format!("citation key '{}' not found in bibliography", citation.key),
+                    &citation.file,
+                    citation.line,
+                    citation.column,
+                ));
+            }
         }
     }
 
@@ -275,7 +298,7 @@ pub fn check_project(
 
     if !has_nocite_all {
         for entry in &scoped_entries {
-            if !cited_keys.contains(entry.key.as_str()) {
+            if !cited_key_matches(&cited_keys, entry.key.as_str()) {
                 diagnostics.push(Diagnostic::new(
                     "CIT002",
                     Severity::Warning,
@@ -289,6 +312,9 @@ pub fn check_project(
     }
 
     for entry in &scoped_entries {
+        if is_bibliography_control_entry(entry) {
+            continue;
+        }
         let missing = missing_required_fields(entry);
         if !missing.is_empty() {
             diagnostics.push(Diagnostic::new(
@@ -316,6 +342,20 @@ pub fn check_project(
     diagnostics.extend(find_non_canonical_bibliography_keys(&scoped_entries));
 
     Ok(diagnostics)
+}
+
+fn case_folded_key_map(keys: &HashSet<&str>) -> HashMap<String, Vec<String>> {
+    let mut folded = HashMap::new();
+    for key in keys {
+        folded
+            .entry(key.to_ascii_lowercase())
+            .or_insert_with(Vec::new)
+            .push((*key).to_string());
+    }
+    for keys in folded.values_mut() {
+        keys.sort();
+    }
+    folded
 }
 
 fn should_skip_large_bib_with_bbl(
@@ -423,11 +463,15 @@ fn scoped_bibliography_entries<'a>(
         return entries.iter().collect();
     }
 
-    let active_keys: HashSet<&str> = cited_keys
+    let active_keys: HashSet<String> = cited_keys
         .iter()
-        .copied()
-        .chain(bbl_keys.iter().map(String::as_str))
-        .chain(source_bibitem_keys.iter().map(String::as_str))
+        .map(|key| key.to_ascii_lowercase())
+        .chain(bbl_keys.iter().map(|key| key.to_ascii_lowercase()))
+        .chain(
+            source_bibitem_keys
+                .iter()
+                .map(|key| key.to_ascii_lowercase()),
+        )
         .collect();
 
     if active_keys.is_empty() {
@@ -436,8 +480,14 @@ fn scoped_bibliography_entries<'a>(
 
     entries
         .iter()
-        .filter(|entry| active_keys.contains(entry.key.as_str()))
+        .filter(|entry| active_keys.contains(&entry.key.to_ascii_lowercase()))
         .collect()
+}
+
+fn cited_key_matches(cited_keys: &HashSet<&str>, key: &str) -> bool {
+    cited_keys
+        .iter()
+        .any(|cited_key| cited_key.eq_ignore_ascii_case(key))
 }
 
 fn read_first_existing_bib(
@@ -515,6 +565,13 @@ fn missing_required_fields(entry: &BibEntry) -> Vec<&'static str> {
     }
 
     missing
+}
+
+fn is_bibliography_control_entry(entry: &BibEntry) -> bool {
+    matches!(
+        entry.entry_type.as_str(),
+        "comment" | "preamble" | "settings" | "set" | "string" | "xdata"
+    )
 }
 
 fn has_any_field(entry: &BibEntry, names: &[&str]) -> bool {
@@ -1150,6 +1207,18 @@ fn is_citation_punctuation_exception(previous: &str, punctuation: char) -> bool 
         "cf.~",
         "cf.,~",
         "vs.~",
+        "ref.~",
+        "refs.~",
+        "fig.~",
+        "figs.~",
+        "eq.~",
+        "eqs.~",
+        "sec.~",
+        "secs.~",
+        "ch.~",
+        "chap.~",
+        "no.~",
+        "nos.~",
         "\\eg,~",
         "\\eg~",
         "\\ie,~",

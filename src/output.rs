@@ -11,9 +11,18 @@ use crate::rules::rule_infos;
 
 pub fn render_text(result: &CheckResult) -> String {
     let mut output = String::new();
-    output.push_str("Summary\n");
+    output.push_str("# Paper Linter Report\n\n");
+    output.push_str("## Summary\n\n");
     output.push_str(&format!(
-        "checked {} file(s), {} error(s), {} warning(s)\n",
+        "checked {} file(s), {} error(s), {} warning(s)\n\n",
+        result.files_checked,
+        result.error_count(),
+        result.warning_count()
+    ));
+    output.push_str("| Files checked | Errors | Warnings |\n");
+    output.push_str("|---:|---:|---:|\n");
+    output.push_str(&format!(
+        "| {} | {} | {} |\n",
         result.files_checked,
         result.error_count(),
         result.warning_count()
@@ -36,12 +45,14 @@ pub fn render_text(result: &CheckResult) -> String {
     }
 
     output.push('\n');
-    output.push_str("By Severity\n");
+    output.push_str("## By Severity\n\n");
+    output.push_str("| Severity | Count |\n");
+    output.push_str("|---|---:|\n");
     if errors > 0 {
-        output.push_str(&format!("- error: {errors}\n"));
+        output.push_str(&format!("| error | {errors} |\n"));
     }
     if warnings > 0 {
-        output.push_str(&format!("- warning: {warnings}\n"));
+        output.push_str(&format!("| warning | {warnings} |\n"));
     }
 
     let mut groups: Vec<_> = by_code.into_iter().collect();
@@ -53,18 +64,21 @@ pub fn render_text(result: &CheckResult) -> String {
     });
 
     output.push('\n');
-    output.push_str("By Rule\n");
+    output.push_str("## By Rule\n\n");
+    output.push_str("| Rule | Severity | Name | Count |\n");
+    output.push_str("|---|---|---|---:|\n");
     for (code, diagnostics) in &groups {
         let severity = diagnostics[0].severity.as_str();
         let name = rule_name(code);
         output.push_str(&format!(
-            "- {severity}[{code}] {name}: {}\n",
+            "| `{code}` | {severity} | {} | {} |\n",
+            markdown_table_cell(name),
             diagnostics.len()
         ));
     }
 
     output.push('\n');
-    output.push_str("Diagnostics\n");
+    output.push_str("## Diagnostics\n");
     for (code, diagnostics) in groups {
         let severity = diagnostics[0].severity.as_str();
         let name = rule_name(code);
@@ -81,7 +95,7 @@ pub fn render_text(result: &CheckResult) -> String {
         if single_message_group {
             let (message, diagnostics) = by_message.into_iter().next().expect("one group");
             output.push_str(&format!(
-                "\n{} ({})\n",
+                "\n### {} ({})\n\n",
                 message.format(severity, code),
                 diagnostics.len()
             ));
@@ -90,7 +104,7 @@ pub fn render_text(result: &CheckResult) -> String {
         }
 
         output.push_str(&format!(
-            "\n{severity}[{code}] {name} ({})\n",
+            "\n### {severity}[{code}] {name} ({})\n",
             by_message
                 .values()
                 .map(|diagnostics| diagnostics.len())
@@ -98,9 +112,7 @@ pub fn render_text(result: &CheckResult) -> String {
         ));
 
         for (message, diagnostics) in by_message {
-            output.push_str("  ");
-            output.push_str(&message.format(severity, code));
-            output.push('\n');
+            output.push_str(&format!("\n#### {}\n\n", message.format(severity, code)));
             push_file_locations(&mut output, diagnostics, 4, 6);
         }
     }
@@ -124,14 +136,14 @@ fn push_file_locations(
 
     for (file, diagnostics) in by_file {
         output.push_str(&format!(
-            "{:file_indent$}{}\n",
+            "{:file_indent$}- `{}`\n",
             "",
             display_path(file),
             file_indent = file_indent
         ));
         for diagnostic in diagnostics {
             output.push_str(&format!(
-                "{:location_indent$}{}:{}\n",
+                "{:location_indent$}- `{}:{}`\n",
                 "",
                 diagnostic.line,
                 diagnostic.column,
@@ -139,6 +151,10 @@ fn push_file_locations(
             ));
         }
     }
+}
+
+fn markdown_table_cell(value: &str) -> String {
+    value.replace('|', "\\|")
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
@@ -559,13 +575,16 @@ mod tests {
 
         let text = render_text(&result);
 
-        assert!(text.starts_with("Summary\nchecked 1 file(s), 0 error(s), 1 warning(s)"));
-        assert!(text.contains("By Rule\n- warning[LBL001] unused label: 1\n"));
-        assert!(text
-            .contains("\nwarning[LBL001] label 'sec:problem_statement' is never referenced (1)\n"));
-        assert!(!text.contains("\nwarning[LBL001] unused label (1)\n"));
-        assert!(text.contains("  tmp/sample-paper/root.tex\n"));
-        assert!(text.contains("    180:29\n"));
+        assert!(text.starts_with("# Paper Linter Report\n\n## Summary\n\n"));
+        assert!(text.contains("| Files checked | Errors | Warnings |\n"));
+        assert!(text.contains("| 1 | 0 | 1 |\n"));
+        assert!(text.contains("| `LBL001` | warning | unused label | 1 |\n"));
+        assert!(text.contains(
+            "\n### warning[LBL001] label 'sec:problem_statement' is never referenced (1)\n"
+        ));
+        assert!(!text.contains("\n### warning[LBL001] unused label (1)\n"));
+        assert!(text.contains("  - `tmp/sample-paper/root.tex`\n"));
+        assert!(text.contains("    - `180:29`\n"));
         assert!(!text.contains("/tmp/sample-paper/root.tex:180:29"));
     }
 
@@ -596,10 +615,10 @@ mod tests {
 
         let text = render_text(&result);
 
-        assert!(text.contains("warning[TXT004] filler word (2)"));
-        assert!(text.contains("  warning[TXT004] filler word 'just'\n"));
-        assert!(text.contains("  warning[TXT004] filler word 'very'\n"));
-        assert!(text.contains("    tmp/main.tex\n"));
+        assert!(text.contains("### warning[TXT004] filler word (2)"));
+        assert!(text.contains("#### warning[TXT004] filler word 'just'\n"));
+        assert!(text.contains("#### warning[TXT004] filler word 'very'\n"));
+        assert!(text.contains("    - `tmp/main.tex`\n"));
     }
 
     #[test]

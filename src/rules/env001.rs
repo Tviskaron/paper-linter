@@ -18,9 +18,28 @@ impl Rule for EnvironmentMismatch {
     fn check_file(&self, path: &Path, content: &str) -> Vec<Diagnostic> {
         let mut diagnostics = Vec::new();
         let mut stack: Vec<EnvironmentEvent> = Vec::new();
+        let mut ignored_stack: Vec<String> = Vec::new();
 
         for event in environment_events(content) {
+            if let Some(ignored_name) = ignored_stack.last() {
+                match event.kind {
+                    EnvironmentEventKind::Begin if is_opaque_environment(&event.name) => {
+                        ignored_stack.push(event.name);
+                    }
+                    EnvironmentEventKind::End if event.name == *ignored_name => {
+                        ignored_stack.pop();
+                    }
+                    _ => {}
+                }
+                continue;
+            }
+
             if is_ignored_environment(&event.name) {
+                if event.kind == EnvironmentEventKind::Begin {
+                    if is_opaque_environment(&event.name) {
+                        ignored_stack.push(event.name);
+                    }
+                }
                 continue;
             }
 
@@ -50,7 +69,14 @@ impl Rule for EnvironmentMismatch {
 }
 
 fn is_ignored_environment(name: &str) -> bool {
-    matches!(name, "document" | "list")
+    matches!(name, "document" | "list") || is_opaque_environment(name)
+}
+
+fn is_opaque_environment(name: &str) -> bool {
+    matches!(
+        name,
+        "comment" | "verbatim" | "Verbatim" | "minted" | "lstlisting"
+    )
 }
 
 fn diagnostic(rule: &EnvironmentMismatch, path: &Path, event: &EnvironmentEvent) -> Diagnostic {
@@ -114,6 +140,16 @@ mod tests {
         let diagnostics = EnvironmentMismatch.check_file(
             Path::new("paper.tex"),
             "\\begin{abstract}\n\\end{list}\n\\end{abstract}\n",
+        );
+
+        assert!(diagnostics.is_empty());
+    }
+
+    #[test]
+    fn ignores_verbatim_like_environments() {
+        let diagnostics = EnvironmentMismatch.check_file(
+            Path::new("paper.tex"),
+            "\\begin{figure}\n\\begin{lstlisting}\n\\begin{not-latex}\n\\end{lstlisting}\n\\end{figure}\n",
         );
 
         assert!(diagnostics.is_empty());

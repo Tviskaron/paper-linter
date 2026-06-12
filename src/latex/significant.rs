@@ -198,7 +198,11 @@ fn inactive_spans(content: &str) -> Vec<InactiveSpan> {
                 } else {
                     index
                 };
-                let end = opaque_environment_end(content, env_name, after_env);
+                let end = if env_name == "lstlisting" {
+                    opaque_environment_close_start(content, env_name, after_env)
+                } else {
+                    opaque_environment_end(content, env_name, after_env)
+                };
                 spans.push(InactiveSpan {
                     start: span_start,
                     end,
@@ -213,6 +217,21 @@ fn inactive_spans(content: &str) -> Vec<InactiveSpan> {
     }
 
     spans
+}
+
+fn opaque_environment_close_start(content: &str, env_name: &str, start: usize) -> usize {
+    let needle = format!("\\end{{{env_name}}}");
+    let mut index = start;
+
+    while let Some(relative) = content[index..].find(&needle) {
+        let candidate = index + relative;
+        if !is_escaped(content.as_bytes(), candidate) {
+            return candidate;
+        }
+        index = candidate + 1;
+    }
+
+    content.len()
 }
 
 fn opaque_environment_end(content: &str, env_name: &str, start: usize) -> usize {
@@ -522,6 +541,20 @@ mod tests {
 
         assert!(!masked.contains("TODO"));
         assert!(masked.contains("Active"));
+        assert_eq!(masked.lines().count(), content.lines().count());
+    }
+
+    #[test]
+    fn preserves_lstlisting_boundaries_while_masking_body() {
+        let content =
+            "\\begin{figure}\n\\begin{lstlisting}[language=Python]\nTODO\n\\end{lstlisting}\n\\end{figure}\n";
+
+        let masked = mask_inactive_regions(content);
+
+        assert!(masked.contains("\\begin{lstlisting}[language=Python]"));
+        assert!(masked.contains("\\end{lstlisting}"));
+        assert!(!masked.contains("TODO"));
+        assert!(masked.contains("\\end{figure}"));
         assert_eq!(masked.lines().count(), content.lines().count());
     }
 

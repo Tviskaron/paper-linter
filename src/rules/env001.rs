@@ -35,10 +35,8 @@ impl Rule for EnvironmentMismatch {
             }
 
             if is_ignored_environment(&event.name) {
-                if event.kind == EnvironmentEventKind::Begin {
-                    if is_opaque_environment(&event.name) {
-                        ignored_stack.push(event.name);
-                    }
+                if event.kind == EnvironmentEventKind::Begin && is_opaque_environment(&event.name) {
+                    ignored_stack.push(event.name);
                 }
                 continue;
             }

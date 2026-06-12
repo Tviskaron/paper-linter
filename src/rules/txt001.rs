@@ -3,6 +3,16 @@ use std::path::Path;
 use crate::diagnostic::{Diagnostic, Severity};
 use crate::rules::Rule;
 
+const EDITORIAL_TOKENS: &[&str] = &["todo", "fixme", "xxx", "tbd", "hack"];
+const EDITORIAL_PHRASES: &[&str] = &[
+    "check this",
+    "fix this",
+    "rewrite this",
+    "add this",
+    "move this",
+    "@author",
+];
+
 pub struct PlaceholderText;
 
 impl Rule for PlaceholderText {
@@ -20,15 +30,18 @@ impl Rule for PlaceholderText {
 
         for (index, line) in content.lines().enumerate() {
             let active_line = uncommented_line(line);
+            let line_number = index + 1;
 
             if definition_brace_depth > 0 {
                 definition_brace_depth += brace_delta(active_line);
                 definition_brace_depth = definition_brace_depth.max(0);
+                diagnostics.extend(comment_diagnostic(self, path, line, line_number));
                 continue;
             }
 
             if is_macro_definition(active_line) {
                 definition_brace_depth = brace_delta(active_line).max(0);
+                diagnostics.extend(comment_diagnostic(self, path, line, line_number));
                 continue;
             }
 
@@ -38,10 +51,12 @@ impl Rule for PlaceholderText {
                     Severity::Warning,
                     self.name(),
                     path,
-                    index + 1,
+                    line_number,
                     column,
                 ));
             }
+
+            diagnostics.extend(comment_diagnostic(self, path, line, line_number));
         }
 
         diagnostics
@@ -85,6 +100,76 @@ fn uncommented_line(line: &str) -> &str {
     }
 
     line
+}
+
+fn comment_diagnostic(
+    rule: &PlaceholderText,
+    path: &Path,
+    line: &str,
+    line_number: usize,
+) -> Option<Diagnostic> {
+    let (comment, comment_column) = comment_text(line)?;
+    if is_layout_comment(line, comment) {
+        return None;
+    }
+    editorial_match(comment).map(|(pattern, relative_column)| {
+        Diagnostic::new(
+            rule.code(),
+            Severity::Warning,
+            format!("editorial comment contains '{pattern}'"),
+            path,
+            line_number,
+            comment_column + relative_column,
+        )
+        .with_hint("resolve or remove the editorial comment before submission")
+    })
+}
+
+fn comment_text(line: &str) -> Option<(&str, usize)> {
+    let index = comment_start(line)?;
+    Some((&line[index + 1..], byte_to_column(line, index)))
+}
+
+fn comment_start(line: &str) -> Option<usize> {
+    let mut escaped = false;
+
+    for (index, ch) in line.char_indices() {
+        if ch == '%' && !escaped {
+            return Some(index);
+        }
+
+        escaped = ch == '\\' && !escaped;
+        if ch != '\\' {
+            escaped = false;
+        }
+    }
+
+    None
+}
+
+fn is_layout_comment(line: &str, comment: &str) -> bool {
+    comment.trim().is_empty()
+        || (line.trim_end().ends_with('%') && comment.trim().is_empty())
+        || line.trim_start().starts_with('%') && comment.trim().is_empty()
+}
+
+fn editorial_match(comment: &str) -> Option<(&'static str, usize)> {
+    let lower = comment.to_ascii_lowercase();
+
+    for token in EDITORIAL_TOKENS {
+        if let Some(index) = find_word_placeholder(&lower, token) {
+            let column = comment[..index].chars().count() + 1;
+            return Some((token, column));
+        }
+    }
+
+    for phrase in EDITORIAL_PHRASES {
+        if let Some(index) = lower.find(phrase) {
+            let column = comment[..index].chars().count() + 1;
+            return Some((phrase, column));
+        }
+    }
+    None
 }
 
 fn is_macro_definition(line: &str) -> bool {
@@ -195,7 +280,11 @@ mod tests {
         let diagnostics =
             PlaceholderText.check_file(Path::new("paper.tex"), "% TODO: revise this\n");
 
-        assert!(diagnostics.is_empty());
+        assert_eq!(diagnostics.len(), 1);
+        assert_eq!(diagnostics[0].code, "TXT001");
+        assert!(diagnostics[0]
+            .message
+            .contains("editorial comment contains 'todo'"));
     }
 
     #[test]
@@ -236,5 +325,33 @@ mod tests {
         );
 
         assert!(diagnostics.is_empty());
+    }
+
+    #[test]
+    fn detects_common_editorial_markers_in_comments() {
+        let content = "% FIXME: update\n% XXX remove\n% TBD\n% HACK: temporary\n";
+        let diagnostics = PlaceholderText.check_file(Path::new("paper.tex"), content);
+
+        assert_eq!(diagnostics.len(), 4);
+        assert!(diagnostics
+            .iter()
+            .all(|diagnostic| diagnostic.code == "TXT001"));
+    }
+
+    #[test]
+    fn ignores_comment_markers_inside_words() {
+        let content =
+            "% todorov2012mujoco\n% \\usepackage{todonotes}\n% \\iftodonotes\n% NetHack\n% reward hacking\n";
+        let diagnostics = PlaceholderText.check_file(Path::new("paper.tex"), content);
+
+        assert!(diagnostics.is_empty());
+    }
+
+    #[test]
+    fn detects_strong_editorial_phrases_in_comments() {
+        let content = "% check this claim\n% rewrite this paragraph\n";
+        let diagnostics = PlaceholderText.check_file(Path::new("paper.tex"), content);
+
+        assert_eq!(diagnostics.len(), 2);
     }
 }

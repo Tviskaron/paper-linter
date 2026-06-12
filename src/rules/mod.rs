@@ -2,7 +2,6 @@ mod alg001;
 mod cap001;
 mod cap002;
 pub(crate) mod citations;
-mod cmt001;
 mod env001;
 mod fig001;
 mod fig002;
@@ -97,10 +96,9 @@ static TXT002_RULE: txt002::RepeatedWords = txt002::RepeatedWords;
 static TXT003_RULE: txt003::LongSentence = txt003::LongSentence;
 static TXT004_RULE: txt004::FillerWords = txt004::FillerWords;
 static TXT005_RULE: txt005::PassiveVoice = txt005::PassiveVoice;
-static CMT001_RULE: cmt001::EditorialComment = cmt001::EditorialComment;
 static WS001_RULE: ws001::TrailingWhitespace = ws001::TrailingWhitespace;
 static SYN001_RULE: syn001::PreambleBraceBalance = syn001::PreambleBraceBalance;
-static RULES: [&dyn Rule; 23] = [
+static RULES: [&dyn Rule; 22] = [
     &ENV001_RULE,
     &FMT001_RULE,
     &FMT002_RULE,
@@ -121,7 +119,6 @@ static RULES: [&dyn Rule; 23] = [
     &TXT003_RULE,
     &TXT004_RULE,
     &TXT005_RULE,
-    &CMT001_RULE,
     &WS001_RULE,
     &SYN001_RULE,
 ];
@@ -194,7 +191,7 @@ pub struct RuleInfo {
     pub fix: &'static str,
 }
 
-static RULE_INFOS: [RuleInfo; 65] = [
+static RULE_INFOS: [RuleInfo; 64] = [
     RuleInfo {
         code: "ALG001",
         name: "orphan algorithm",
@@ -202,14 +199,6 @@ static RULE_INFOS: [RuleInfo; 65] = [
         summary: "An algorithm label is not referenced from reachable TeX sources.",
         why: "Unreferenced algorithms are often stale draft material or missing narrative links in the paper.",
         fix: "Reference the algorithm with \\ref{...} or remove the unused algorithm/label.",
-    },
-    RuleInfo {
-        code: "CMT001",
-        name: "editorial comment",
-        default_severity: Severity::Warning,
-        summary: "A LaTeX comment contains editorial markers such as TODO, FIXME, XXX, or TBD.",
-        why: "Editorial comments are easy to miss during review and should not appear in submitted papers.",
-        fix: "Resolve the note or remove the comment before submission.",
     },
     RuleInfo {
         code: "CAP001",
@@ -742,7 +731,7 @@ mod tests {
             vec![
                 "ENV001", "FMT001", "FMT002", "SEC001", "SEC002", "SEC003", "SEC004", "SEC005",
                 "SEC006", "MTH001", "MTH002", "MTH003", "LAT002", "TEX001", "TEX002", "TXT001",
-                "TXT002", "TXT003", "TXT004", "TXT005", "CMT001", "WS001", "SYN001"
+                "TXT002", "TXT003", "TXT004", "TXT005", "WS001", "SYN001"
             ]
         );
     }
@@ -789,15 +778,14 @@ mod tests {
         assert_eq!(
             codes,
             vec![
-                "ALG001", "CMT001", "CAP001", "CAP002", "BIB001", "BIB002", "CIT001", "CIT002",
-                "CIT003", "CIT004", "CIT005", "CIT006", "CIT007", "CIT008", "CIT009", "CIT010",
-                "CIT011", "CIT012", "ENV001", "FIG001", "FIG002", "FIG003", "FIG004", "FIG005",
-                "FIG006", "FIG007", "FIG008", "FMT001", "FMT002", "LBL001", "LAT001", "LAT002",
-                "MTH001", "MTH002", "MTH003", "PRJ001", "PRJ002", "PRJ003", "PRJ004", "PKG001",
-                "PKG002", "REF001", "SEC001", "SEC002", "SEC003", "SEC004", "SEC005", "SEC006",
-                "SYN001", "LOG001", "BLG001", "AUX001", "RDY001", "RDY002", "RDY003", "TAB001",
-                "TAB002", "TEX001", "TEX002", "TXT001", "TXT002", "TXT003", "TXT004", "TXT005",
-                "WS001"
+                "ALG001", "CAP001", "CAP002", "BIB001", "BIB002", "CIT001", "CIT002", "CIT003",
+                "CIT004", "CIT005", "CIT006", "CIT007", "CIT008", "CIT009", "CIT010", "CIT011",
+                "CIT012", "ENV001", "FIG001", "FIG002", "FIG003", "FIG004", "FIG005", "FIG006",
+                "FIG007", "FIG008", "FMT001", "FMT002", "LBL001", "LAT001", "LAT002", "MTH001",
+                "MTH002", "MTH003", "PRJ001", "PRJ002", "PRJ003", "PRJ004", "PKG001", "PKG002",
+                "REF001", "SEC001", "SEC002", "SEC003", "SEC004", "SEC005", "SEC006", "SYN001",
+                "LOG001", "BLG001", "AUX001", "RDY001", "RDY002", "RDY003", "TAB001", "TAB002",
+                "TEX001", "TEX002", "TXT001", "TXT002", "TXT003", "TXT004", "TXT005", "WS001"
             ]
         );
     }

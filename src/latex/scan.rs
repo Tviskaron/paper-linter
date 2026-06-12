@@ -123,6 +123,12 @@ pub struct FloatEnv {
     pub labels: Vec<Label>,
     pub captions: Vec<Caption>,
     pub graphics: Vec<Graphic>,
+    #[serde(default)]
+    pub has_nested_label: bool,
+    #[serde(default)]
+    pub has_nested_caption: bool,
+    #[serde(default)]
+    pub has_nested_graphic: bool,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -165,6 +171,9 @@ struct ActiveEnv {
     labels: Vec<Label>,
     captions: Vec<Caption>,
     graphics: Vec<Graphic>,
+    has_nested_label: bool,
+    has_nested_caption: bool,
+    has_nested_graphic: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -230,6 +239,9 @@ pub fn scan_latex_with_aliases(
                         labels: Vec::new(),
                         captions: Vec::new(),
                         graphics: Vec::new(),
+                        has_nested_label: false,
+                        has_nested_caption: false,
+                        has_nested_graphic: false,
                     });
                     index = optional_end;
                 } else {
@@ -245,7 +257,7 @@ pub fn scan_latex_with_aliases(
 
                     if let Some(position) = stack.iter().rposition(|env| env.env_name == env_name) {
                         let env = stack.remove(position);
-                        finish_env(env, &mut result);
+                        finish_env(env, &mut stack, &mut result);
                     }
                     index = end;
                 } else {
@@ -287,7 +299,7 @@ pub fn scan_latex_with_aliases(
                 }
             }
             "caption" => {
-                let arg_start = skip_optional_args(content, after_command);
+                let arg_start = skip_optional_args(content, skip_star(content, after_command));
                 if let Some((text, body_start, body_end, end)) =
                     parse_required_arg_with_bounds(content, arg_start)
                 {
@@ -305,6 +317,32 @@ pub fn scan_latex_with_aliases(
                     index = end;
                 } else {
                     index = after_command;
+                }
+            }
+            "captionof" => {
+                let Some((_caption_kind, after_kind)) = parse_required_arg(content, after_command)
+                else {
+                    index = after_command;
+                    continue;
+                };
+                let arg_start = skip_optional_args(content, skip_star(content, after_kind));
+                if let Some((text, body_start, body_end, end)) =
+                    parse_required_arg_with_bounds(content, arg_start)
+                {
+                    let caption = Caption { text, location };
+                    attach_caption(&mut stack, caption.clone());
+                    collect_labels_in_range(
+                        content,
+                        body_start,
+                        body_end,
+                        &line_starts,
+                        &file,
+                        &mut stack,
+                        &mut result,
+                    );
+                    index = end;
+                } else {
+                    index = after_kind;
                 }
             }
             command_name if is_builtin_label_command(command_name) => {
@@ -414,7 +452,7 @@ pub fn scan_latex_with_aliases(
     }
 
     while let Some(env) = stack.pop() {
-        finish_env(env, &mut result);
+        finish_env(env, &mut stack, &mut result);
     }
 
     result
@@ -473,7 +511,9 @@ fn append_missing(target: &mut Vec<String>, source: &[String]) {
     }
 }
 
-fn finish_env(env: ActiveEnv, result: &mut ScanResult) {
+fn finish_env(env: ActiveEnv, stack: &mut [ActiveEnv], result: &mut ScanResult) {
+    propagate_nested_float(&env, stack);
+
     if let Some(kind) = env.kind {
         result.floats.push(FloatEnv {
             kind,
@@ -482,8 +522,25 @@ fn finish_env(env: ActiveEnv, result: &mut ScanResult) {
             labels: env.labels,
             captions: env.captions,
             graphics: env.graphics,
+            has_nested_label: env.has_nested_label,
+            has_nested_caption: env.has_nested_caption,
+            has_nested_graphic: env.has_nested_graphic,
         });
     }
+}
+
+fn propagate_nested_float(env: &ActiveEnv, stack: &mut [ActiveEnv]) {
+    if env.kind.is_none() {
+        return;
+    }
+
+    let Some(parent) = stack.iter_mut().rev().find(|parent| parent.kind.is_some()) else {
+        return;
+    };
+
+    parent.has_nested_label |= env.has_nested_label || !env.labels.is_empty();
+    parent.has_nested_caption |= env.has_nested_caption || !env.captions.is_empty();
+    parent.has_nested_graphic |= env.has_nested_graphic || !env.graphics.is_empty();
 }
 
 fn attach_label(stack: &mut [ActiveEnv], label: Label) {
@@ -934,6 +991,16 @@ fn skip_optional_args(content: &str, start: usize) -> usize {
     parse_optional_arg_values(content, start).1
 }
 
+fn skip_star(content: &str, start: usize) -> usize {
+    let bytes = content.as_bytes();
+    let index = skip_ws(bytes, start);
+    if bytes.get(index) == Some(&b'*') {
+        index + 1
+    } else {
+        start
+    }
+}
+
 fn parse_optional_arg_values(content: &str, start: usize) -> (Vec<String>, usize) {
     let bytes = content.as_bytes();
     let mut index = start;
@@ -1080,6 +1147,36 @@ mod tests {
         assert_eq!(scan.floats[0].captions[0].text, "Long");
         assert_eq!(scan.floats[0].labels[0].key, "fig:model");
         assert_eq!(scan.labels[0].kind, LabelKind::Figure);
+    }
+
+    #[test]
+    fn collects_starred_caption() {
+        let scan = scan_latex(
+            Path::new("paper.tex"),
+            "\\begin{figure}\n\\caption*{Unnumbered note}\n\\end{figure}\n",
+        );
+
+        assert_eq!(scan.floats.len(), 1);
+        assert_eq!(scan.floats[0].captions.len(), 1);
+        assert_eq!(scan.floats[0].captions[0].text, "Unnumbered note");
+    }
+
+    #[test]
+    fn records_nested_float_content_flags() {
+        let scan = scan_latex(
+            Path::new("paper.tex"),
+            "\\begin{figure}\n\\begin{subfigure}\n\\caption{Panel}\n\\label{fig:panel}\n\\includegraphics{panel}\n\\end{subfigure}\n\\end{figure}\n",
+        );
+
+        let outer = scan
+            .floats
+            .iter()
+            .find(|float| float.env_name == "figure")
+            .expect("outer figure");
+        assert!(outer.has_nested_caption);
+        assert!(outer.has_nested_label);
+        assert!(outer.has_nested_graphic);
+        assert!(outer.captions.is_empty());
     }
 
     #[test]

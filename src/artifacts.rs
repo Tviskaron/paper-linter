@@ -181,9 +181,8 @@ pub fn compile_regression_diagnostics(
     paper_root: &Path,
 ) -> io::Result<Vec<Diagnostic>> {
     let content = fs::read_to_string(compile_result_path)?;
-    let value: serde_json::Value = serde_json::from_str(&content).map_err(|error| {
-        io::Error::new(io::ErrorKind::InvalidData, error.to_string())
-    })?;
+    let value: serde_json::Value = serde_json::from_str(&content)
+        .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error.to_string()))?;
 
     let papers = value
         .get("papers")
@@ -217,7 +216,11 @@ pub fn compile_regression_diagnostics(
         }
 
         if let Some(comparison) = paper.get("comparison") {
-            if comparison.get("page_match").and_then(|value| value.as_bool()) == Some(false) {
+            if comparison
+                .get("page_match")
+                .and_then(|value| value.as_bool())
+                == Some(false)
+            {
                 let compiled = comparison
                     .get("compiled_pages")
                     .and_then(|value| value.as_u64())
@@ -241,13 +244,19 @@ pub fn compile_regression_diagnostics(
                 );
             }
 
-            if let Some(ratio) = comparison.get("size_ratio").and_then(|value| value.as_f64()) {
+            if let Some(ratio) = comparison
+                .get("size_ratio")
+                .and_then(|value| value.as_f64())
+            {
                 if ratio < 0.85 {
                     diagnostics.push(
                         Diagnostic::new(
                             "RDY003",
                             Severity::Warning,
-                            format!("compiled PDF size ratio is {:.3}, which is unusually low", ratio),
+                            format!(
+                                "compiled PDF size ratio is {:.3}, which is unusually low",
+                                ratio
+                            ),
                             compile_result_path,
                             1,
                             1,
@@ -262,6 +271,21 @@ pub fn compile_regression_diagnostics(
     }
 
     Ok(diagnostics)
+}
+
+fn paper_id_from_root(paper_root: &Path) -> Option<String> {
+    if paper_root.is_file() {
+        paper_root
+            .parent()
+            .and_then(|parent| parent.file_name())
+            .and_then(|name| name.to_str())
+            .map(str::to_string)
+    } else {
+        paper_root
+            .file_name()
+            .and_then(|name| name.to_str())
+            .map(str::to_string)
+    }
 }
 
 #[cfg(test)]
@@ -314,20 +338,5 @@ mod tests {
         assert!(diagnostics.iter().any(|diag| diag.code == "RDY002"));
         assert!(diagnostics.iter().any(|diag| diag.code == "RDY003"));
         let _ = fs::remove_dir_all(dir);
-    }
-}
-
-fn paper_id_from_root(paper_root: &Path) -> Option<String> {
-    if paper_root.is_file() {
-        paper_root
-            .parent()
-            .and_then(|parent| parent.file_name())
-            .and_then(|name| name.to_str())
-            .map(str::to_string)
-    } else {
-        paper_root
-            .file_name()
-            .and_then(|name| name.to_str())
-            .map(str::to_string)
     }
 }

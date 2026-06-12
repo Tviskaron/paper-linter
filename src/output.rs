@@ -233,8 +233,20 @@ impl<'a> ReadyGroups<'a> {
 fn is_project_risk(code: &str) -> bool {
     matches!(
         &code[..3.min(code.len())],
-        "ALG" | "AUX" | "BIB" | "BLG" | "CIT" | "FIG" | "LBL" | "LOG" | "PKG" | "PRJ" | "RDY"
-            | "REF" | "SYN" | "TAB"
+        "ALG"
+            | "AUX"
+            | "BIB"
+            | "BLG"
+            | "CIT"
+            | "FIG"
+            | "LBL"
+            | "LOG"
+            | "PKG"
+            | "PRJ"
+            | "RDY"
+            | "REF"
+            | "SYN"
+            | "TAB"
     )
 }
 

@@ -19,6 +19,7 @@ impl ProjectRule for OrphanFigure {
             .floats
             .iter()
             .filter(|float| float.kind == FloatKind::Figure)
+            .filter(|float| float.env_name != "subfigure")
             .flat_map(|float| float.labels.iter())
             .filter(|label| !project.is_after_appendix(&label.location))
             .filter(|label| !project.is_referenced(&label.key))

@@ -18,7 +18,7 @@ impl ProjectRule for MissingCaption {
             .floats
             .iter()
             .filter(|float| !is_subfloat(&float.env_name))
-            .filter(|float| float.captions.is_empty())
+            .filter(|float| float.captions.is_empty() && !float.has_nested_caption)
             .map(|float| {
                 Diagnostic::new(
                     self.code(),

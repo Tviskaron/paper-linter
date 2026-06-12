@@ -20,6 +20,7 @@ pub struct CheckOptions {
     pub select: Vec<String>,
     pub ignore: Vec<String>,
     pub strict: bool,
+    pub all_rules: bool,
     pub all_tex: bool,
     pub baseline: Option<PathBuf>,
     pub project_index: Option<PathBuf>,
@@ -153,12 +154,10 @@ pub fn run_check(options: &CheckOptions) -> Result<CheckResult, ToolError> {
             || family_may_be_enabled("AUX", options)
             || options.select.is_empty()
         {
-            diagnostics.extend(
-                check_artifacts(dir).map_err(|source| ToolError::Io {
-                    path: Some(dir.clone()),
-                    source,
-                })?,
-            );
+            diagnostics.extend(check_artifacts(dir).map_err(|source| ToolError::Io {
+                path: Some(dir.clone()),
+                source,
+            })?);
         }
     }
 
@@ -168,12 +167,12 @@ pub fn run_check(options: &CheckOptions) -> Result<CheckResult, ToolError> {
             .first()
             .cloned()
             .unwrap_or_else(|| path.parent().unwrap_or(path).to_path_buf());
-        diagnostics.extend(
-            compile_regression_diagnostics(path, &paper_root).map_err(|source| ToolError::Io {
+        diagnostics.extend(compile_regression_diagnostics(path, &paper_root).map_err(
+            |source| ToolError::Io {
                 path: Some(path.clone()),
                 source,
-            })?,
-        );
+            },
+        )?);
     }
 
     diagnostics.retain(|diagnostic| code_is_enabled(diagnostic.code, options));
@@ -277,6 +276,13 @@ fn code_is_enabled(code: &str, options: &CheckOptions) -> bool {
         return !ignored;
     }
 
+    if options.all_rules {
+        return !options
+            .ignore
+            .iter()
+            .any(|pattern| code.starts_with(pattern));
+    }
+
     rule_policy::code_is_enabled(code, &options.select, &options.ignore, options.strict)
 }
 
@@ -285,11 +291,12 @@ fn rule_is_enabled(code: &str, strict_only: bool, options: &CheckOptions) -> boo
         return false;
     }
 
-    !strict_only || options.strict || !options.select.is_empty()
+    options.all_rules || !strict_only || options.strict || !options.select.is_empty()
 }
 
 fn family_may_be_enabled(family: &str, options: &CheckOptions) -> bool {
-    let selected = options.select.is_empty()
+    let selected = options.all_rules
+        || options.select.is_empty()
         || options
             .select
             .iter()
@@ -350,5 +357,16 @@ mod tests {
             ..CheckOptions::default()
         };
         assert!(rule_is_enabled("CAP002", true, &strict));
+    }
+
+    #[test]
+    fn all_rules_enables_strict_only_rules_without_strict_mode() {
+        let options = CheckOptions {
+            all_rules: true,
+            ..CheckOptions::default()
+        };
+
+        assert!(code_is_enabled("CAP002", &options));
+        assert!(rule_is_enabled("CAP002", true, &options));
     }
 }

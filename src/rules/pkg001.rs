@@ -5,7 +5,9 @@ use crate::latex::scan::PackageImport;
 use crate::project::ProjectIndex;
 use crate::rules::ProjectRule;
 
-const CLASH_PRONE_PACKAGES: &[&str] = &["xcolor", "hyperref", "babel", "geometry", "fontenc", "inputenc"];
+const CLASH_PRONE_PACKAGES: &[&str] = &[
+    "xcolor", "hyperref", "babel", "geometry", "fontenc", "inputenc",
+];
 
 pub struct PackageOptionClash;
 
@@ -116,10 +118,7 @@ fn normalize_options(options: &[String]) -> Vec<String> {
     normalized
 }
 
-fn find_package_import<'a>(
-    packages: &'a [PackageImport],
-    name: &str,
-) -> Option<&'a PackageImport> {
+fn find_package_import<'a>(packages: &'a [PackageImport], name: &str) -> Option<&'a PackageImport> {
     packages
         .iter()
         .find(|package| normalize_package_name(&package.name) == name)
@@ -191,6 +190,8 @@ mod tests {
             floats: Vec::new(),
         };
         let diagnostics = PackageOptionClash.check_project(&project);
-        assert!(diagnostics.iter().any(|diag| diag.message.contains("hyperref")));
+        assert!(diagnostics
+            .iter()
+            .any(|diag| diag.message.contains("hyperref")));
     }
 }

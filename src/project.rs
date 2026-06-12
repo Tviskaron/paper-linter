@@ -5,6 +5,7 @@ use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
+use crate::latex::aliases::infer_aliases_from_sources;
 use crate::latex::scan::{
     scan_latex_with_aliases, BibliographyDecl, DocumentClass, FloatEnv, Graphic, GraphicsPath,
     Include, Label, PackageImport, Ref, ScanAliases, SourceLocation,
@@ -45,9 +46,16 @@ impl ProjectIndex {
         aliases: &ScanAliases,
     ) -> io::Result<Self> {
         let root = infer_project_root(input_paths, discovered_files)?;
+        let mut effective_aliases = aliases.clone();
+        let raw_contents: Vec<String> = discovered_files
+            .iter()
+            .filter_map(|path| fs::read_to_string(path).ok())
+            .collect();
+        let content_refs: Vec<&str> = raw_contents.iter().map(String::as_str).collect();
+        effective_aliases.merge_missing(&infer_aliases_from_sources(&content_refs));
         let mut builder = ProjectBuilder {
             root,
-            aliases: aliases.clone(),
+            aliases: effective_aliases,
             seen: BTreeSet::new(),
             document_ended: BTreeMap::new(),
             files: Vec::new(),
@@ -814,5 +822,25 @@ mod tests {
             .collect();
         packages.sort();
         assert_eq!(packages, vec!["amsmath", "graphicx", "xcolor"]);
+    }
+
+    #[test]
+    fn infers_ref_wrapper_macros_for_scanning() {
+        let dir = temp_project("macro-alias-inference");
+        let main = dir.join("paper.tex");
+        write(
+            &main,
+            "\\documentclass{article}\n\\newcommand{\\figref}[1]{\\ref{#1}}\n\\begin{document}\n\\label{fig:one}\nSee \\figref{fig:one}.\n\\end{document}\n",
+        );
+
+        let index = ProjectIndex::build(std::slice::from_ref(&main), std::slice::from_ref(&main))
+            .expect("project should index");
+
+        assert!(
+            index
+                .refs
+                .iter()
+                .any(|reference| reference.command == "figref" && reference.key == "fig:one")
+        );
     }
 }

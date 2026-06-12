@@ -11,6 +11,7 @@ mod fig004;
 mod fig005;
 mod fig006;
 mod fig007;
+mod fig008;
 mod fmt001;
 mod fmt002;
 mod lat001;
@@ -19,6 +20,8 @@ mod lbl001;
 mod mth001;
 mod mth002;
 mod mth003;
+mod pkg001;
+mod pkg002;
 mod prj001;
 mod prj002;
 mod prj003;
@@ -30,6 +33,7 @@ mod sec003;
 mod sec004;
 mod sec005;
 mod sec006;
+mod syn001;
 mod tab001;
 mod tab002;
 mod tex001;
@@ -95,7 +99,8 @@ static TXT004_RULE: txt004::FillerWords = txt004::FillerWords;
 static TXT005_RULE: txt005::PassiveVoice = txt005::PassiveVoice;
 static CMT001_RULE: cmt001::EditorialComment = cmt001::EditorialComment;
 static WS001_RULE: ws001::TrailingWhitespace = ws001::TrailingWhitespace;
-static RULES: [&dyn Rule; 22] = [
+static SYN001_RULE: syn001::PreambleBraceBalance = syn001::PreambleBraceBalance;
+static RULES: [&dyn Rule; 23] = [
     &ENV001_RULE,
     &FMT001_RULE,
     &FMT002_RULE,
@@ -118,6 +123,7 @@ static RULES: [&dyn Rule; 22] = [
     &TXT005_RULE,
     &CMT001_RULE,
     &WS001_RULE,
+    &SYN001_RULE,
 ];
 
 static FIG001_RULE: fig001::MissingAsset = fig001::MissingAsset;
@@ -130,12 +136,15 @@ static FIG004_RULE: fig004::MissingFigureLabel = fig004::MissingFigureLabel;
 static FIG005_RULE: fig005::UnsafeGraphicPath = fig005::UnsafeGraphicPath;
 static FIG006_RULE: fig006::ImageFormatPolicy = fig006::ImageFormatPolicy;
 static FIG007_RULE: fig007::ImageHeaderMetadata = fig007::ImageHeaderMetadata;
+static FIG008_RULE: fig008::CorruptImage = fig008::CorruptImage;
+static PKG001_RULE: pkg001::PackageOptionClash = pkg001::PackageOptionClash;
+static PKG002_RULE: pkg002::PackageDependencies = pkg002::PackageDependencies;
 static TAB001_RULE: tab001::OrphanTable = tab001::OrphanTable;
 static TAB002_RULE: tab002::MissingTableLabel = tab002::MissingTableLabel;
 static LAT001_RULE: lat001::LegacyLatex = lat001::LegacyLatex;
 static LBL001_RULE: lbl001::UnusedLabel = lbl001::UnusedLabel;
 static REF001_RULE: ref001::MissingReferenceTarget = ref001::MissingReferenceTarget;
-static PROJECT_RULES: [&dyn ProjectRule; 15] = [
+static PROJECT_RULES: [&dyn ProjectRule; 18] = [
     &FIG001_RULE,
     &ALG001_RULE,
     &CAP001_RULE,
@@ -146,6 +155,9 @@ static PROJECT_RULES: [&dyn ProjectRule; 15] = [
     &FIG005_RULE,
     &FIG006_RULE,
     &FIG007_RULE,
+    &FIG008_RULE,
+    &PKG001_RULE,
+    &PKG002_RULE,
     &TAB001_RULE,
     &TAB002_RULE,
     &LAT001_RULE,
@@ -182,7 +194,7 @@ pub struct RuleInfo {
     pub fix: &'static str,
 }
 
-static RULE_INFOS: [RuleInfo; 54] = [
+static RULE_INFOS: [RuleInfo; 65] = [
     RuleInfo {
         code: "ALG001",
         name: "orphan algorithm",
@@ -320,6 +332,14 @@ static RULE_INFOS: [RuleInfo; 54] = [
         fix: "Rename the bibliography key and matching citations to firstauthorYYYYfirsttitleword, for example skrynnik2024learn.",
     },
     RuleInfo {
+        code: "CIT012",
+        name: "bibliography source missing with bbl fallback",
+        default_severity: Severity::Warning,
+        summary: "A declared bibliography file is missing but a prebuilt .bbl file supplies citation keys.",
+        why: "arXiv bundles often ship .bbl without .bib, so citation edits will not rebuild bibliography metadata.",
+        fix: "Restore the missing .bib file if you need to edit bibliography entries.",
+    },
+    RuleInfo {
         code: "ENV001",
         name: "environment begin/end mismatch",
         default_severity: Severity::Error,
@@ -382,6 +402,14 @@ static RULE_INFOS: [RuleInfo; 54] = [
         summary: "A raster figure image has suspiciously small pixel dimensions.",
         why: "Very small raster figures often render blurry in camera-ready PDFs and can indicate a placeholder asset.",
         fix: "Use a higher-resolution source image or a vector format.",
+    },
+    RuleInfo {
+        code: "FIG008",
+        name: "corrupt image",
+        default_severity: Severity::Error,
+        summary: "A figure asset exists but its image header is invalid or unreadable.",
+        why: "Corrupt image files often fail during PDF compilation or render as missing figures.",
+        fix: "Replace the asset with a valid PNG, JPEG, or PDF file.",
     },
     RuleInfo {
         code: "FMT001",
@@ -480,6 +508,22 @@ static RULE_INFOS: [RuleInfo; 54] = [
         fix: "Include the file from the root document or remove the stray .tex file.",
     },
     RuleInfo {
+        code: "PKG001",
+        name: "package option clash",
+        default_severity: Severity::Error,
+        summary: "A package is loaded multiple times with incompatible options or in a risky order.",
+        why: "Option clashes are a common source of LaTeX compile failures, especially for xcolor and hyperref.",
+        fix: "Merge package options into one \\usepackage call and load cleveref after hyperref.",
+    },
+    RuleInfo {
+        code: "PKG002",
+        name: "package dependency",
+        default_severity: Severity::Warning,
+        summary: "A LaTeX command or environment is used without its expected package.",
+        why: "Missing package dependencies often produce undefined control sequence errors at compile time.",
+        fix: "Load the required package or remove the incompatible package combination.",
+    },
+    RuleInfo {
         code: "REF001",
         name: "missing reference target",
         default_severity: Severity::Error,
@@ -534,6 +578,62 @@ static RULE_INFOS: [RuleInfo; 54] = [
         summary: "A section heading uses discouraged style such as trailing punctuation or all caps.",
         why: "Consistent heading style makes the paper outline easier to scan and reduces venue-polish issues.",
         fix: "Use normal heading capitalization and remove trailing heading punctuation unless the venue requires it.",
+    },
+    RuleInfo {
+        code: "SYN001",
+        name: "preamble brace balance",
+        default_severity: Severity::Error,
+        summary: "A preamble command such as \\author or \\title has unbalanced braces.",
+        why: "Unbalanced preamble arguments commonly cause runaway argument and compile failures.",
+        fix: "Close all braces in \\author, \\title, \\thanks, and related preamble commands.",
+    },
+    RuleInfo {
+        code: "LOG001",
+        name: "compile log issue",
+        default_severity: Severity::Error,
+        summary: "A LaTeX compile log contains an error or unresolved reference warning.",
+        why: "Compile logs expose issues that static source analysis cannot always see.",
+        fix: "Fix the reported LaTeX error or rerun the build until warnings are resolved.",
+    },
+    RuleInfo {
+        code: "BLG001",
+        name: "bibtex log issue",
+        default_severity: Severity::Error,
+        summary: "A BibTeX .blg log reports bibliography processing errors.",
+        why: "BibTeX failures leave citations unresolved even when LaTeX itself succeeds.",
+        fix: "Fix the .bib syntax or duplicate keys reported in the .blg file.",
+    },
+    RuleInfo {
+        code: "AUX001",
+        name: "compile aux issue",
+        default_severity: Severity::Warning,
+        summary: "Compile auxiliary files indicate unresolved citations or references.",
+        why: "Auxiliary files reflect the final build state after BibTeX/Biber passes.",
+        fix: "Ensure bibliography entries and labels exist and rebuild the project.",
+    },
+    RuleInfo {
+        code: "RDY001",
+        name: "compile regression failure",
+        default_severity: Severity::Error,
+        summary: "The paper failed to compile in the baseline compile corpus.",
+        why: "A known-good submission build should compile reliably before release.",
+        fix: "Fix compile blockers and rerun the build pipeline.",
+    },
+    RuleInfo {
+        code: "RDY002",
+        name: "pdf page regression",
+        default_severity: Severity::Error,
+        summary: "The compiled PDF page count differs from the reference PDF.",
+        why: "Page-count drift often indicates missing sections, floats, or bibliography.",
+        fix: "Compare the compiled and reference PDFs and restore missing content.",
+    },
+    RuleInfo {
+        code: "RDY003",
+        name: "pdf size regression",
+        default_severity: Severity::Warning,
+        summary: "The compiled PDF is much smaller than the reference PDF.",
+        why: "Large size drops can indicate missing figures, fonts, or bibliography content.",
+        fix: "Verify that figures, bibliography, and embedded assets are included in the build.",
     },
     RuleInfo {
         code: "TAB001",
@@ -642,7 +742,7 @@ mod tests {
             vec![
                 "ENV001", "FMT001", "FMT002", "SEC001", "SEC002", "SEC003", "SEC004", "SEC005",
                 "SEC006", "MTH001", "MTH002", "MTH003", "LAT002", "TEX001", "TEX002", "TXT001",
-                "TXT002", "TXT003", "TXT004", "TXT005", "CMT001", "WS001"
+                "TXT002", "TXT003", "TXT004", "TXT005", "CMT001", "WS001", "SYN001"
             ]
         );
     }
@@ -654,7 +754,8 @@ mod tests {
             codes,
             vec![
                 "FIG001", "ALG001", "CAP001", "CAP002", "FIG002", "FIG003", "FIG004", "FIG005",
-                "FIG006", "FIG007", "TAB001", "TAB002", "LAT001", "REF001", "LBL001"
+                "FIG006", "FIG007", "FIG008", "PKG001", "PKG002", "TAB001", "TAB002", "LAT001",
+                "REF001", "LBL001"
             ]
         );
     }
@@ -690,11 +791,13 @@ mod tests {
             vec![
                 "ALG001", "CMT001", "CAP001", "CAP002", "BIB001", "BIB002", "CIT001", "CIT002",
                 "CIT003", "CIT004", "CIT005", "CIT006", "CIT007", "CIT008", "CIT009", "CIT010",
-                "CIT011", "ENV001", "FIG001", "FIG002", "FIG003", "FIG004", "FIG005", "FIG006",
-                "FIG007", "FMT001", "FMT002", "LBL001", "LAT001", "LAT002", "MTH001", "MTH002",
-                "MTH003", "PRJ001", "PRJ002", "PRJ003", "PRJ004", "REF001", "SEC001", "SEC002",
-                "SEC003", "SEC004", "SEC005", "SEC006", "TAB001", "TAB002", "TEX001", "TEX002",
-                "TXT001", "TXT002", "TXT003", "TXT004", "TXT005", "WS001"
+                "CIT011", "CIT012", "ENV001", "FIG001", "FIG002", "FIG003", "FIG004", "FIG005",
+                "FIG006", "FIG007", "FIG008", "FMT001", "FMT002", "LBL001", "LAT001", "LAT002",
+                "MTH001", "MTH002", "MTH003", "PRJ001", "PRJ002", "PRJ003", "PRJ004", "PKG001",
+                "PKG002", "REF001", "SEC001", "SEC002", "SEC003", "SEC004", "SEC005", "SEC006",
+                "SYN001", "LOG001", "BLG001", "AUX001", "RDY001", "RDY002", "RDY003", "TAB001",
+                "TAB002", "TEX001", "TEX002", "TXT001", "TXT002", "TXT003", "TXT004", "TXT005",
+                "WS001"
             ]
         );
     }

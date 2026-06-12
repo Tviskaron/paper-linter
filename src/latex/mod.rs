@@ -1,3 +1,4 @@
+pub mod aliases;
 pub mod commands;
 pub mod environments;
 pub mod prose;

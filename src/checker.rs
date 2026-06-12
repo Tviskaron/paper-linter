@@ -2,6 +2,7 @@ use std::fmt;
 use std::io;
 use std::path::PathBuf;
 
+use crate::artifacts::{check_artifacts, compile_regression_diagnostics};
 use crate::baseline::{Baseline, BaselineError};
 use crate::config::LinterConfig;
 use crate::diagnostic::{Diagnostic, Severity};
@@ -23,6 +24,8 @@ pub struct CheckOptions {
     pub all_tex: bool,
     pub baseline: Option<PathBuf>,
     pub project_index: Option<PathBuf>,
+    pub artifacts_dir: Option<PathBuf>,
+    pub baseline_compile: Option<PathBuf>,
     pub config: LinterConfig,
 }
 
@@ -143,6 +146,35 @@ pub fn run_check(options: &CheckOptions) -> Result<CheckResult, ToolError> {
                 diagnostics.extend(rule.check_graph(&graph));
             }
         }
+    }
+
+    if let Some(dir) = &options.artifacts_dir {
+        if family_may_be_enabled("LOG", options)
+            || family_may_be_enabled("BLG", options)
+            || family_may_be_enabled("AUX", options)
+            || options.select.is_empty()
+        {
+            diagnostics.extend(
+                check_artifacts(dir).map_err(|source| ToolError::Io {
+                    path: Some(dir.clone()),
+                    source,
+                })?,
+            );
+        }
+    }
+
+    if let Some(path) = &options.baseline_compile {
+        let paper_root = options
+            .paths
+            .first()
+            .cloned()
+            .unwrap_or_else(|| path.parent().unwrap_or(path).to_path_buf());
+        diagnostics.extend(
+            compile_regression_diagnostics(path, &paper_root).map_err(|source| ToolError::Io {
+                path: Some(path.clone()),
+                source,
+            })?,
+        );
     }
 
     diagnostics.retain(|diagnostic| code_is_enabled(diagnostic.code, options));

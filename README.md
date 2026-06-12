@@ -130,10 +130,15 @@ selection, suppressions, and baselines.
 
 ```console
 paper-linter check path/to/paper.tex
+paper-linter check path/to/paper.tex --format terminal
 paper-linter check path/to/project --format sarif
 paper-linter check path/to/project --baseline paper-linter-baseline.json
 paper-linter check path/to/project --update-baseline paper-linter-baseline.json
 ```
+
+Use `--format terminal` for compact colored output in editor hooks and local
+agent loops. Keep `--format text`, `json`, `sarif`, or `lsp` for reports and
+machine-readable integrations.
 
 ### `ready`
 

@@ -9,6 +9,14 @@ use crate::checker::CheckResult;
 use crate::diagnostic::{Diagnostic, Severity};
 use crate::rules::rule_infos;
 
+const RESET: &str = "\x1b[0m";
+const BOLD: &str = "\x1b[1m";
+const DIM: &str = "\x1b[2m";
+const RED: &str = "\x1b[31m";
+const YELLOW: &str = "\x1b[33m";
+const GREEN: &str = "\x1b[32m";
+const CYAN: &str = "\x1b[36m";
+
 pub fn render_text(result: &CheckResult) -> String {
     let mut output = String::new();
     output.push_str("# Paper Linter Report\n\n");
@@ -120,6 +128,60 @@ pub fn render_text(result: &CheckResult) -> String {
     output
 }
 
+pub fn render_terminal(result: &CheckResult) -> String {
+    let mut output = String::new();
+
+    for diagnostic in &result.diagnostics {
+        let severity = terminal_severity(diagnostic.severity);
+        output.push_str(&format!(
+            "{severity} {dim}[{code}]{reset} {path}{dim}:{line}:{column}{reset} {message}\n",
+            severity = severity,
+            dim = DIM,
+            code = diagnostic.code,
+            reset = RESET,
+            path = display_path(&diagnostic.file),
+            line = diagnostic.line,
+            column = diagnostic.column,
+            message = diagnostic.message
+        ));
+
+        if let Some(hint) = &diagnostic.hint {
+            output.push_str(&format!(
+                "  {cyan}hint{reset} {hint}\n",
+                cyan = CYAN,
+                reset = RESET
+            ));
+        }
+    }
+
+    if !result.diagnostics.is_empty() {
+        output.push('\n');
+    }
+
+    let errors = result.error_count();
+    let warnings = result.warning_count();
+    let status = if errors > 0 {
+        format!("{red}{bold}x{reset}", red = RED, bold = BOLD, reset = RESET)
+    } else {
+        format!(
+            "{green}{bold}ok{reset}",
+            green = GREEN,
+            bold = BOLD,
+            reset = RESET
+        )
+    };
+
+    output.push_str(&format!(
+        "{status} {files} passed · {errors_text}, {warnings_text}\n",
+        status = status,
+        files = result.files_checked,
+        errors_text = terminal_count(errors, "err", RED),
+        warnings_text = terminal_count(warnings, "warn", YELLOW)
+    ));
+
+    output
+}
+
 fn push_file_locations(
     output: &mut String,
     diagnostics: Vec<&Diagnostic>,
@@ -150,6 +212,40 @@ fn push_file_locations(
                 location_indent = location_indent
             ));
         }
+    }
+}
+
+fn terminal_severity(severity: Severity) -> String {
+    match severity {
+        Severity::Error => format!(
+            "{red}{bold}error{reset}",
+            red = RED,
+            bold = BOLD,
+            reset = RESET
+        ),
+        Severity::Warning => {
+            format!(
+                "{yellow}{bold}warn{reset}",
+                yellow = YELLOW,
+                bold = BOLD,
+                reset = RESET
+            )
+        }
+    }
+}
+
+fn terminal_count(count: usize, label: &str, color: &str) -> String {
+    if count == 0 {
+        format!("{count} {label}")
+    } else {
+        format!(
+            "{color}{bold}{count} {label}{reset}",
+            color = color,
+            bold = BOLD,
+            count = count,
+            label = label,
+            reset = RESET
+        )
     }
 }
 

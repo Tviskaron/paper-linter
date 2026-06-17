@@ -7,7 +7,7 @@ for local editing, CI, pre-commit hooks, and batch corpus checks without
 compiling LaTeX by default.
 
 <p align="center">
-  <img src="logo/horizontal_logo.png" alt="PaperLinter" width="560">
+  <img src="logo/horizontal_logo.svg" alt="PaperLinter" width="560">
 </p>
 
 

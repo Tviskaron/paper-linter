@@ -48,6 +48,7 @@ const ruleGroupsEl = byId("rule-groups");
 const filterEl = byId<HTMLInputElement>("rule-filter");
 const selectValueEl = byId<HTMLInputElement>("select-value");
 const reportEl = byId("report");
+const copyReportBtn = byId<HTMLButtonElement>("copy-report");
 const presetSelect = byId<HTMLSelectElement>("preset-select");
 const themeToggle = byId<HTMLButtonElement>("theme-toggle");
 const allTexToggle = byId<HTMLInputElement>("all-tex-toggle");
@@ -64,6 +65,7 @@ let rules: RuleView[] = [];
 let selectedRuleCodes = new Set<string>();
 let loadedFiles: LoadedFile[] = [];
 let sourceLabel = "";
+let lastReportMarkdown = "";
 
 const presetProfiles = {
   essential: {
@@ -193,6 +195,9 @@ function bindEvents() {
   form.addEventListener("submit", async (event) => {
     event.preventDefault();
     await runLinter();
+  });
+  copyReportBtn.addEventListener("click", () => {
+    void copyReport();
   });
 }
 
@@ -363,6 +368,8 @@ async function runLinter() {
   statusEl.textContent = "running...";
   reportEl.textContent = "Running linter...";
   reportEl.classList.add("empty");
+  lastReportMarkdown = "";
+  copyReportBtn.disabled = true;
 
   try {
     const total = loadedFiles.reduce((sum, file) => sum + file.bytes.length, 0);
@@ -389,6 +396,8 @@ async function runLinter() {
   } catch (error) {
     reportEl.textContent = error instanceof Error ? error.message : String(error);
     reportEl.classList.remove("empty");
+    lastReportMarkdown = "";
+    copyReportBtn.disabled = true;
     statusEl.textContent = "failed";
   }
 }
@@ -403,8 +412,26 @@ function renderResult(output: CheckOutput) {
   byId("files").textContent = `files ${filesChecked}`;
   byId("errors").textContent = `errors ${errors}`;
   byId("warnings").textContent = `warnings ${warnings}`;
-  reportEl.innerHTML = renderMarkdown(renderReportMarkdown(diagnostics, checkedFiles, filesChecked, errors, warnings));
+  lastReportMarkdown = renderReportMarkdown(diagnostics, checkedFiles, filesChecked, errors, warnings);
+  reportEl.innerHTML = renderMarkdown(lastReportMarkdown);
   reportEl.classList.remove("empty");
+  copyReportBtn.disabled = false;
+}
+
+async function copyReport() {
+  if (!lastReportMarkdown) return;
+  try {
+    await navigator.clipboard.writeText(lastReportMarkdown);
+    const originalTitle = copyReportBtn.title;
+    copyReportBtn.classList.add("copied");
+    copyReportBtn.title = "Copied!";
+    window.setTimeout(() => {
+      copyReportBtn.classList.remove("copied");
+      copyReportBtn.title = originalTitle;
+    }, 1600);
+  } catch {
+    statusEl.textContent = "copy failed";
+  }
 }
 
 function renderRules() {

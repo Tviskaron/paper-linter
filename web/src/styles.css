@@ -140,9 +140,92 @@ aside {
   gap: 14px;
 }
 
+.report-title-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
 .report-title {
   font-weight: 700;
   font-size: 16px;
+}
+
+.icon-button {
+  position: relative;
+  width: 28px;
+  height: 28px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--surface);
+  color: var(--muted);
+  cursor: pointer;
+  transition: color 0.15s ease, border-color 0.15s ease, background 0.2s ease, transform 0.15s ease;
+}
+
+.icon-button-icon {
+  position: absolute;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  transition: opacity 0.18s ease, transform 0.22s cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+
+.icon-button .icon-copy {
+  opacity: 1;
+  transform: scale(1);
+}
+
+.icon-button .icon-check {
+  opacity: 0;
+  transform: scale(0.55);
+}
+
+.icon-button .check-path {
+  stroke-dasharray: 24;
+  stroke-dashoffset: 24;
+}
+
+.icon-button:active:not(:disabled) {
+  transform: scale(0.92);
+}
+
+.icon-button.copied {
+  color: var(--ok, #2f9e44);
+  border-color: color-mix(in srgb, var(--ok, #2f9e44) 45%, var(--line));
+  background: color-mix(in srgb, var(--ok, #2f9e44) 10%, var(--surface));
+}
+
+.icon-button.copied .icon-copy {
+  opacity: 0;
+  transform: scale(0.55);
+}
+
+.icon-button.copied .icon-check {
+  opacity: 1;
+  transform: scale(1);
+}
+
+.icon-button.copied .check-path {
+  animation: check-draw 0.35s ease 0.08s forwards;
+}
+
+@keyframes check-draw {
+  to { stroke-dashoffset: 0; }
+}
+
+.icon-button:hover:not(:disabled) {
+  color: var(--ink);
+  border-color: var(--ink);
+}
+
+.icon-button:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
 }
 
 .metrics {

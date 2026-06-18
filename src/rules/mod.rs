@@ -184,7 +184,7 @@ pub fn all_graph_project_rules() -> &'static [&'static dyn GraphProjectRule] {
     &GRAPH_PROJECT_RULES
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
 pub struct RuleInfo {
     pub code: &'static str,
     pub name: &'static str,

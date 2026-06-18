@@ -154,6 +154,7 @@ fn amsmath_environments_in_line(line: &str) -> Vec<&'static str> {
 
 #[cfg(test)]
 mod tests {
+    use std::collections::BTreeMap;
     use std::path::PathBuf;
 
     use crate::project::{ProjectIndex, SourceFile};
@@ -179,6 +180,7 @@ mod tests {
             document_classes: Vec::new(),
             packages: scan.packages,
             floats: Vec::new(),
+            asset_headers: BTreeMap::new(),
         };
 
         let diagnostics = PackageDependencies.check_project(&project);

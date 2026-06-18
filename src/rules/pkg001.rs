@@ -126,6 +126,7 @@ fn find_package_import<'a>(packages: &'a [PackageImport], name: &str) -> Option<
 
 #[cfg(test)]
 mod tests {
+    use std::collections::BTreeMap;
     use std::path::PathBuf;
 
     use crate::project::{ProjectIndex, SourceFile};
@@ -148,6 +149,7 @@ mod tests {
             document_classes: Vec::new(),
             packages: crate::latex::scan::scan_latex("main.tex", content).packages,
             floats: Vec::new(),
+            asset_headers: BTreeMap::new(),
         }
     }
 
@@ -188,6 +190,7 @@ mod tests {
             document_classes: Vec::new(),
             packages: scan.packages,
             floats: Vec::new(),
+            asset_headers: BTreeMap::new(),
         };
         let diagnostics = PackageOptionClash.check_project(&project);
         assert!(diagnostics

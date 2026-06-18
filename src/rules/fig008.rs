@@ -33,7 +33,12 @@ impl ProjectRule for CorruptImage {
                 continue;
             };
 
-            if let Some(reason) = validate_image_file(&asset_path) {
+            let reason = if let Some(header) = project.asset_header(&asset_path) {
+                validate_image_header(&asset_path, header)
+            } else {
+                validate_image_file(&asset_path)
+            };
+            if let Some(reason) = reason {
                 diagnostics.push(
                     Diagnostic::new(
                         self.code(),
@@ -61,8 +66,12 @@ fn validate_image_file(path: &Path) -> Option<&'static str> {
         return None;
     }
 
-    let extension = path.extension()?.to_str()?.to_ascii_lowercase();
     let header = read_header(path).ok()?;
+    validate_image_header(path, &header)
+}
+
+fn validate_image_header(path: &Path, header: &[u8]) -> Option<&'static str> {
+    let extension = path.extension()?.to_str()?.to_ascii_lowercase();
     if header.is_empty() {
         return None;
     }

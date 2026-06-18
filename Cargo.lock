@@ -943,6 +943,7 @@ dependencies = [
  "tar",
  "tempfile",
  "tokio",
+ "wasm-bindgen",
  "zip",
 ]
 

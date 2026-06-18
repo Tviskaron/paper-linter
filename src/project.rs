@@ -33,6 +33,8 @@ pub struct ProjectIndex {
     pub document_classes: Vec<DocumentClass>,
     pub packages: Vec<PackageImport>,
     pub floats: Vec<FloatEnv>,
+    #[serde(default, skip)]
+    pub asset_headers: BTreeMap<PathBuf, Vec<u8>>,
 }
 
 impl ProjectIndex {
@@ -82,6 +84,7 @@ impl ProjectIndex {
             root,
             aliases: effective_aliases,
             allowed_files,
+            virtual_files: None,
             seen: BTreeSet::new(),
             document_ended: BTreeMap::new(),
             files: Vec::new(),
@@ -93,9 +96,62 @@ impl ProjectIndex {
             document_classes: Vec::new(),
             packages: Vec::new(),
             floats: Vec::new(),
+            asset_headers: BTreeMap::new(),
         };
 
         for file in discovered_files {
+            builder.add_file(file)?;
+        }
+
+        Ok(builder.finish())
+    }
+
+    pub fn build_virtual_with_aliases(
+        root: PathBuf,
+        root_files: &[PathBuf],
+        all_files: &BTreeMap<PathBuf, Vec<u8>>,
+        aliases: &ScanAliases,
+        all_tex: bool,
+    ) -> io::Result<Self> {
+        let root = normalize_virtual_path(&root);
+        let discovered_files =
+            discover_virtual_tex_files(&root, root_files, all_files, aliases, all_tex);
+        if discovered_files.is_empty() {
+            return Err(io::Error::new(
+                io::ErrorKind::NotFound,
+                "no TeX files found",
+            ));
+        }
+
+        let raw_contents: Vec<String> = discovered_files
+            .iter()
+            .filter_map(|path| read_virtual_string(all_files, path))
+            .collect();
+        let content_refs: Vec<&str> = raw_contents.iter().map(String::as_str).collect();
+        let mut effective_aliases = aliases.clone();
+        effective_aliases.merge_missing(&infer_aliases_from_sources(&content_refs));
+
+        let allowed_files = (!all_tex).then(|| discovered_files.iter().cloned().collect());
+        let mut builder = ProjectBuilder {
+            root,
+            aliases: effective_aliases,
+            allowed_files,
+            virtual_files: Some(all_files.clone()),
+            seen: BTreeSet::new(),
+            document_ended: BTreeMap::new(),
+            files: Vec::new(),
+            labels: Vec::new(),
+            refs: Vec::new(),
+            graphics: Vec::new(),
+            graphics_paths: Vec::new(),
+            bibliographies: Vec::new(),
+            document_classes: Vec::new(),
+            packages: Vec::new(),
+            floats: Vec::new(),
+            asset_headers: collect_asset_headers(all_files),
+        };
+
+        for file in &discovered_files {
             builder.add_file(file)?;
         }
 
@@ -151,6 +207,15 @@ impl ProjectIndex {
     }
 
     pub fn resolve_graphic(&self, graphic: &Graphic) -> Option<PathBuf> {
+        if !self.asset_headers.is_empty() {
+            return resolve_virtual_graphic_path(
+                &self.root,
+                &graphic.location.file,
+                &graphic.raw_path,
+                &self.graphics_paths,
+                &self.asset_headers,
+            );
+        }
         resolve_graphic_path(
             &self.root,
             &graphic.location.file,
@@ -160,12 +225,25 @@ impl ProjectIndex {
     }
 
     pub fn find_graphic_case_mismatch(&self, graphic: &Graphic) -> Option<PathBuf> {
+        if !self.asset_headers.is_empty() {
+            return find_virtual_graphic_case_mismatch(
+                &self.root,
+                &graphic.location.file,
+                &graphic.raw_path,
+                &self.graphics_paths,
+                &self.asset_headers,
+            );
+        }
         find_graphic_case_mismatch(
             &self.root,
             &graphic.location.file,
             &graphic.raw_path,
             &self.graphics_paths,
         )
+    }
+
+    pub fn asset_header(&self, path: &Path) -> Option<&[u8]> {
+        self.asset_headers.get(path).map(Vec::as_slice)
     }
 }
 
@@ -217,6 +295,7 @@ struct ProjectBuilder {
     root: PathBuf,
     aliases: ScanAliases,
     allowed_files: Option<BTreeSet<PathBuf>>,
+    virtual_files: Option<BTreeMap<PathBuf, Vec<u8>>>,
     seen: BTreeSet<PathBuf>,
     document_ended: BTreeMap<PathBuf, bool>,
     files: Vec<SourceFile>,
@@ -228,6 +307,7 @@ struct ProjectBuilder {
     document_classes: Vec<DocumentClass>,
     packages: Vec<PackageImport>,
     floats: Vec<FloatEnv>,
+    asset_headers: BTreeMap<PathBuf, Vec<u8>>,
 }
 
 impl ProjectBuilder {
@@ -238,7 +318,7 @@ impl ProjectBuilder {
     }
 
     fn add_file(&mut self, path: &Path) -> io::Result<bool> {
-        let canonical = canonicalize_existing(path)?;
+        let canonical = self.canonicalize_existing(path)?;
         if !canonical.starts_with(&self.root) {
             return Ok(false);
         }
@@ -253,7 +333,7 @@ impl ProjectBuilder {
                 .unwrap_or(false));
         }
 
-        let content = fs::read_to_string(&canonical)?;
+        let content = self.read_to_string(&canonical)?;
         let content = mask_discarded_macro_arguments(&content);
         let content = mask_inactive_regions(&content);
         let scan = scan_latex_with_project_aliases(canonical.clone(), &content, &self.aliases);
@@ -265,7 +345,7 @@ impl ProjectBuilder {
                 break;
             }
 
-            let Some(path) = resolve_include_path(&self.root, &canonical, &include) else {
+            let Some(path) = self.resolve_include_path(&canonical, &include) else {
                 continue;
             };
 
@@ -303,6 +383,44 @@ impl ProjectBuilder {
         Ok(ended)
     }
 
+    fn canonicalize_existing(&self, path: &Path) -> io::Result<PathBuf> {
+        if let Some(files) = &self.virtual_files {
+            let normalized = normalize_virtual_path(path);
+            if files.contains_key(&normalized) {
+                return Ok(normalized);
+            }
+            return Err(io::Error::new(
+                io::ErrorKind::NotFound,
+                format!("path does not exist: {}", path.display()),
+            ));
+        }
+        canonicalize_existing(path)
+    }
+
+    fn read_to_string(&self, path: &Path) -> io::Result<String> {
+        if let Some(files) = &self.virtual_files {
+            return read_virtual_string(files, path).ok_or_else(|| {
+                io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    format!("file is not valid UTF-8: {}", path.display()),
+                )
+            });
+        }
+        fs::read_to_string(path)
+    }
+
+    fn resolve_include_path(&self, current_file: &Path, include: &Include) -> Option<PathBuf> {
+        if let Some(files) = &self.virtual_files {
+            return resolve_virtual_include_path(
+                &self.root,
+                current_file,
+                &include.raw_path,
+                files,
+            );
+        }
+        resolve_include_path(&self.root, current_file, include)
+    }
+
     fn finish(mut self) -> ProjectIndex {
         self.files.sort_by(|left, right| left.path.cmp(&right.path));
         self.labels
@@ -333,6 +451,7 @@ impl ProjectBuilder {
             document_classes: self.document_classes,
             packages: self.packages,
             floats: self.floats,
+            asset_headers: self.asset_headers,
         }
     }
 }
@@ -550,6 +669,202 @@ fn canonical_file_set(paths: &[PathBuf]) -> io::Result<BTreeSet<PathBuf>> {
         .iter()
         .map(|path| path.canonicalize())
         .collect::<io::Result<_>>()
+}
+
+pub fn normalize_virtual_path(path: &Path) -> PathBuf {
+    let mut normalized = PathBuf::from("/project");
+    let path = path.strip_prefix("/project").unwrap_or(path);
+    for component in path.components() {
+        use std::path::Component;
+        match component {
+            Component::Normal(part) => normalized.push(part),
+            Component::ParentDir => {
+                if normalized != Path::new("/project") {
+                    normalized.pop();
+                }
+            }
+            Component::CurDir | Component::RootDir | Component::Prefix(_) => {}
+        }
+    }
+    normalized
+}
+
+fn read_virtual_string(files: &BTreeMap<PathBuf, Vec<u8>>, path: &Path) -> Option<String> {
+    String::from_utf8(files.get(&normalize_virtual_path(path))?.clone()).ok()
+}
+
+fn discover_virtual_tex_files(
+    root: &Path,
+    root_files: &[PathBuf],
+    all_files: &BTreeMap<PathBuf, Vec<u8>>,
+    aliases: &ScanAliases,
+    all_tex: bool,
+) -> Vec<PathBuf> {
+    let mut files = Vec::new();
+    if all_tex {
+        files.extend(all_files.keys().filter(|path| is_tex_path(path)).cloned());
+    } else {
+        for root_file in root_files {
+            let root_file = normalize_virtual_path(root_file);
+            collect_virtual_reachable_tex_files(root, &root_file, all_files, aliases, &mut files);
+        }
+    }
+    files.sort();
+    files.dedup();
+    files
+}
+
+fn collect_virtual_reachable_tex_files(
+    root: &Path,
+    current_file: &Path,
+    all_files: &BTreeMap<PathBuf, Vec<u8>>,
+    aliases: &ScanAliases,
+    files: &mut Vec<PathBuf>,
+) {
+    let current_file = normalize_virtual_path(current_file);
+    if files.iter().any(|file| file == &current_file) || !all_files.contains_key(&current_file) {
+        return;
+    }
+
+    let Some(content) = read_virtual_string(all_files, &current_file) else {
+        return;
+    };
+    files.push(current_file.clone());
+    let content = mask_discarded_macro_arguments(&content);
+    let content = mask_inactive_regions(&content);
+    let scan = scan_latex_with_project_aliases(current_file.clone(), &content, aliases);
+    for include in scan.includes {
+        if let Some(child) =
+            resolve_virtual_include_path(root, &current_file, &include.raw_path, all_files)
+        {
+            collect_virtual_reachable_tex_files(root, &child, all_files, aliases, files);
+        }
+    }
+}
+
+fn is_tex_path(path: &Path) -> bool {
+    path.extension()
+        .and_then(|extension| extension.to_str())
+        .is_some_and(|extension| extension.eq_ignore_ascii_case("tex"))
+}
+
+fn resolve_virtual_include_path(
+    root: &Path,
+    current_file: &Path,
+    raw_path: &str,
+    files: &BTreeMap<PathBuf, Vec<u8>>,
+) -> Option<PathBuf> {
+    let base = current_file.parent()?;
+    let raw = Path::new(raw_path.trim());
+    let mut candidates = tex_include_candidates(base, raw);
+    candidates.extend(tex_include_candidates(root, raw));
+    candidates
+        .into_iter()
+        .map(|candidate| normalize_virtual_path(&candidate))
+        .find(|candidate| files.contains_key(candidate) && candidate.starts_with(root))
+}
+
+fn collect_asset_headers(files: &BTreeMap<PathBuf, Vec<u8>>) -> BTreeMap<PathBuf, Vec<u8>> {
+    files
+        .iter()
+        .filter(|(path, _)| !is_tex_path(path))
+        .map(|(path, bytes)| {
+            let end = bytes.len().min(64 * 1024);
+            (path.clone(), bytes[..end].to_vec())
+        })
+        .collect()
+}
+
+fn resolve_virtual_graphic_path(
+    root: &Path,
+    current_file: &Path,
+    raw_path: &str,
+    graphics_paths: &[GraphicsPath],
+    assets: &BTreeMap<PathBuf, Vec<u8>>,
+) -> Option<PathBuf> {
+    virtual_graphic_candidate_paths(root, current_file, raw_path, graphics_paths, assets)?
+        .into_iter()
+        .find(|candidate| {
+            assets.contains_key(candidate)
+                && find_virtual_case_mismatch(assets, candidate).is_none()
+        })
+}
+
+fn find_virtual_graphic_case_mismatch(
+    root: &Path,
+    current_file: &Path,
+    raw_path: &str,
+    graphics_paths: &[GraphicsPath],
+    assets: &BTreeMap<PathBuf, Vec<u8>>,
+) -> Option<PathBuf> {
+    virtual_graphic_candidate_paths(root, current_file, raw_path, graphics_paths, assets)?
+        .into_iter()
+        .find_map(|candidate| find_virtual_case_mismatch(assets, &candidate))
+}
+
+fn virtual_graphic_candidate_paths(
+    root: &Path,
+    current_file: &Path,
+    raw_path: &str,
+    graphics_paths: &[GraphicsPath],
+    assets: &BTreeMap<PathBuf, Vec<u8>>,
+) -> Option<Vec<PathBuf>> {
+    let base = current_file.parent()?;
+    let raw = Path::new(raw_path.trim());
+    let mut candidates = Vec::new();
+    if raw.is_absolute() {
+        candidates.extend(graphic_candidates(raw.to_path_buf()));
+    } else {
+        candidates.extend(graphic_candidates(base.join(raw)));
+        candidates.extend(graphic_candidates(root.join(raw)));
+        for graphics_path in graphics_paths {
+            let graphics_base = virtual_graphics_path_base(
+                root,
+                &graphics_path.location.file,
+                &graphics_path.raw_path,
+                assets,
+            )?;
+            candidates.extend(graphic_candidates(graphics_base.join(raw)));
+        }
+    }
+    Some(
+        candidates
+            .into_iter()
+            .map(|path| normalize_virtual_path(&path))
+            .collect(),
+    )
+}
+
+fn virtual_graphics_path_base(
+    root: &Path,
+    declaring_file: &Path,
+    raw_path: &str,
+    assets: &BTreeMap<PathBuf, Vec<u8>>,
+) -> Option<PathBuf> {
+    let raw = Path::new(raw_path.trim());
+    if raw.is_absolute() {
+        return Some(normalize_virtual_path(raw));
+    }
+    let declaring_dir = declaring_file.parent()?;
+    let local = normalize_virtual_path(&declaring_dir.join(raw));
+    if assets.keys().any(|path| path.starts_with(&local)) {
+        return Some(local);
+    }
+    Some(normalize_virtual_path(&root.join(raw)))
+}
+
+fn find_virtual_case_mismatch(
+    assets: &BTreeMap<PathBuf, Vec<u8>>,
+    candidate: &Path,
+) -> Option<PathBuf> {
+    if assets.contains_key(candidate) {
+        return None;
+    }
+    let target = candidate.to_string_lossy().to_ascii_lowercase();
+    assets
+        .keys()
+        .find(|path| path.to_string_lossy().to_ascii_lowercase() == target)
+        .cloned()
 }
 
 #[cfg(test)]

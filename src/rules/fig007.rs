@@ -36,7 +36,12 @@ impl ProjectRule for ImageHeaderMetadata {
             let Some(asset_path) = project.resolve_graphic(graphic) else {
                 continue;
             };
-            let Some(dimensions) = read_image_dimensions(&asset_path) else {
+            let dimensions = if let Some(header) = project.asset_header(&asset_path) {
+                read_image_dimensions_from_header(&asset_path, header)
+            } else {
+                read_image_dimensions(&asset_path)
+            };
+            let Some(dimensions) = dimensions else {
                 continue;
             };
 
@@ -69,8 +74,12 @@ struct ImageDimensions {
 }
 
 fn read_image_dimensions(path: &Path) -> Option<ImageDimensions> {
-    let extension = path.extension()?.to_str()?.to_ascii_lowercase();
     let header = read_header(path).ok()?;
+    read_image_dimensions_from_header(path, &header)
+}
+
+fn read_image_dimensions_from_header(path: &Path, header: &[u8]) -> Option<ImageDimensions> {
+    let extension = path.extension()?.to_str()?.to_ascii_lowercase();
     match extension.as_str() {
         "png" => png_dimensions(&header),
         "jpg" | "jpeg" => jpeg_dimensions(&header),

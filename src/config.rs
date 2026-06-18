@@ -1,7 +1,7 @@
 use std::collections::BTreeMap;
 use std::fs;
 use std::io;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 use crate::diagnostic::Severity;
 use crate::latex::scan::ScanAliases;
@@ -25,8 +25,7 @@ impl LinterConfig {
     }
 
     pub fn load_preset(name: &str) -> io::Result<Self> {
-        let path = preset_path(name)?;
-        Self::load(&path)
+        parse_toml(preset_content(name)?)
     }
 
     pub fn merge_into_options(&self, select: &mut Vec<String>, ignore: &mut Vec<String>) {
@@ -50,16 +49,16 @@ impl LinterConfig {
     }
 }
 
-fn preset_path(name: &str) -> io::Result<PathBuf> {
-    let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let path = manifest_dir.join("presets").join(format!("{name}.toml"));
-    if path.is_file() {
-        Ok(path)
-    } else {
-        Err(io::Error::new(
+fn preset_content(name: &str) -> io::Result<&'static str> {
+    match name {
+        "essential" => Ok(include_str!("../presets/essential.toml")),
+        "standard" => Ok(include_str!("../presets/standard.toml")),
+        "strict" => Ok(include_str!("../presets/strict.toml")),
+        "polish" => Ok(include_str!("../presets/polish.toml")),
+        _ => Err(io::Error::new(
             io::ErrorKind::NotFound,
             format!("preset not found: {name}"),
-        ))
+        )),
     }
 }
 

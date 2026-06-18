@@ -1,0 +1,109 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Paper Linter</title>
+    <script type="module" src="/src/main.ts"></script>
+  </head>
+  <body>
+    <header>
+      <div class="topbar">
+        <div class="brand">
+          <img class="brand-logo" src="/assets/logo.svg" alt="Paper Linter" />
+          <div class="subtitle">Run structure, formatting, citation, figure, and project checks against LaTeX paper sources.</div>
+        </div>
+        <div class="header-actions">
+          <button id="theme-toggle" class="theme-toggle" type="button" aria-pressed="false">Light mode</button>
+          <div class="subtitle">Static WASM app</div>
+        </div>
+      </div>
+    </header>
+
+    <main>
+      <aside>
+        <form id="lint-form">
+          <fieldset>
+            <legend>Input</legend>
+            <div class="segmented" role="tablist" aria-label="Input mode">
+              <button type="button" class="active" data-mode="archive">Archive</button>
+              <button type="button" data-mode="directory">Directory</button>
+            </div>
+
+            <div id="archive-panel">
+              <div class="field-label">Source archive</div>
+              <input id="archive-input" class="visually-hidden" type="file" accept=".zip,.tar,.gz,.tgz,.tar.gz,application/zip,application/gzip" />
+              <div id="drop-zone" class="drop-zone" role="button" tabindex="0" aria-controls="archive-input">
+                <strong>Drop archive</strong>
+                <span id="drop-name">.zip, .tar, .tar.gz, .tgz</span>
+              </div>
+            </div>
+
+            <div id="directory-panel" hidden>
+              <div class="field-label">Source directory</div>
+              <input id="directory-input" class="visually-hidden" type="file" webkitdirectory multiple />
+              <div id="directory-zone" class="drop-zone" role="button" tabindex="0" aria-controls="directory-input">
+                <strong>Choose folder</strong>
+                <span id="directory-name">Upload a local paper source directory</span>
+              </div>
+            </div>
+
+            <label>Preset
+              <select id="preset-select" name="preset">
+                <option value="custom">custom</option>
+                <option value="essential">essential</option>
+                <option value="standard" selected>standard</option>
+                <option value="strict">strict</option>
+                <option value="polish">polish</option>
+              </select>
+            </label>
+
+            <div class="tex-mode" aria-label="TeX file selection mode">
+              <span class="tex-mode-label active" tabindex="0" data-mode-label="filtered" data-tooltip="Analyze only TeX files that are likely to belong to the main paper source.">filter .tex</span>
+              <label class="switch" aria-label="Toggle TeX file selection mode">
+                <input id="all-tex-toggle" type="checkbox" name="all_tex" value="true" />
+                <span class="switch-track"></span>
+                <span class="switch-thumb"></span>
+              </label>
+              <span class="tex-mode-label" tabindex="0" data-mode-label="all" data-tooltip="Analyze every .tex file in the archive, including samples, alternatives, and auxiliary source files.">all .tex</span>
+            </div>
+          </fieldset>
+
+          <div class="actions">
+            <button class="primary" type="submit">Run linter</button>
+            <span id="status" class="status"></span>
+          </div>
+
+          <fieldset>
+            <legend>Rule Groups</legend>
+            <div id="rule-groups" class="group-grid"></div>
+          </fieldset>
+
+          <fieldset>
+            <legend>Rules</legend>
+            <div class="rule-toolbar">
+              <input id="rule-filter" type="text" placeholder="Filter by code or name" />
+            </div>
+            <div id="rules" class="rules"></div>
+            <input type="hidden" name="select" id="select-value" />
+          </fieldset>
+        </form>
+      </aside>
+
+      <section class="report">
+        <div class="report-head">
+          <div>
+            <div class="report-title">Report</div>
+            <div id="source" class="subtitle"></div>
+          </div>
+          <div class="metrics">
+            <span class="metric" id="files">files 0</span>
+            <span class="metric error" id="errors">errors 0</span>
+            <span class="metric warning" id="warnings">warnings 0</span>
+          </div>
+        </div>
+        <div id="report" class="markdown-report empty">Upload a local archive or directory to run the linter.</div>
+      </section>
+    </main>
+  </body>
+</html>

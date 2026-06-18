@@ -1,0 +1,17 @@
+{
+  "scripts": {
+    "build:wasm": "wasm-pack build . --target web --out-dir web/pkg --no-default-features --features web",
+    "dev": "npm run build:wasm && vite --host 127.0.0.1 web",
+    "build": "npm run build:wasm && vite build web"
+  },
+  "dependencies": {
+    "@vitejs/plugin-basic-ssl": "^2.1.0",
+    "fflate": "^0.8.2",
+    "js-untar": "^2.0.0",
+    "vite": "^7.0.0"
+  },
+  "devDependencies": {
+    "typescript": "^5.8.0",
+    "wasm-pack": "^0.13.1"
+  }
+}

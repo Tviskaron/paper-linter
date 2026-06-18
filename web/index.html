@@ -27,7 +27,7 @@
             <legend>Input</legend>
             <div class="segmented" role="tablist" aria-label="Input mode">
               <button type="button" class="active" data-mode="archive">Archive</button>
-              <button type="button" data-mode="directory">Directory</button>
+              <button type="button" data-mode="directory" title="Browsers may ask for confirmation before exposing folder files to this local WebAssembly app.">Directory</button>
             </div>
 
             <div id="archive-panel">
@@ -44,7 +44,7 @@
               <input id="directory-input" class="visually-hidden" type="file" webkitdirectory multiple />
               <div id="directory-zone" class="drop-zone" role="button" tabindex="0" aria-controls="directory-input">
                 <strong>Choose folder</strong>
-                <span id="directory-name">Upload a local paper source directory</span>
+                <span id="directory-name">Open a local paper source directory</span>
               </div>
             </div>
 

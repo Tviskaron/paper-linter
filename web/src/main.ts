@@ -3,7 +3,37 @@ import untar from "js-untar";
 import init, { PaperLinter } from "../pkg/paper_linter.js";
 import "./styles.css";
 
-const MAX_UPLOAD_BYTES = 100 * 1024 * 1024;
+const MAX_UPLOAD_BYTES = 250 * 1024 * 1024;
+const EXCLUDED_PATH_PARTS = new Set([
+  ".cache",
+  ".git",
+  ".github",
+  ".idea",
+  ".next",
+  ".nuxt",
+  ".venv",
+  "__pycache__",
+  "build",
+  "dist",
+  "node_modules",
+  "out",
+  "target",
+  "venv",
+]);
+const EXCLUDED_PATH_PREFIXES = ["web/pkg/", "web/dist/"];
+const EXCLUDED_FILE_EXTENSIONS = new Set([
+  ".aux",
+  ".bbl",
+  ".bcf",
+  ".blg",
+  ".fls",
+  ".fdb_latexmk",
+  ".log",
+  ".out",
+  ".pdf",
+  ".synctex.gz",
+  ".xdv",
+]);
 
 type RuleView = {
   code: string;
@@ -52,20 +82,21 @@ const copyReportBtn = byId<HTMLButtonElement>("copy-report");
 const presetSelect = byId<HTMLSelectElement>("preset-select");
 const themeToggle = byId<HTMLButtonElement>("theme-toggle");
 const allTexToggle = byId<HTMLInputElement>("all-tex-toggle");
-const archivePanel = byId("archive-panel");
-const directoryPanel = byId("directory-panel");
 const archiveInput = byId<HTMLInputElement>("archive-input");
 const directoryInput = byId<HTMLInputElement>("directory-input");
 const dropZone = byId("drop-zone");
-const directoryZone = byId("directory-zone");
 const dropName = byId("drop-name");
-const directoryName = byId("directory-name");
+const chooseArchiveBtn = byId<HTMLButtonElement>("choose-archive");
+const chooseDirectoryBtn = byId<HTMLButtonElement>("choose-directory");
 
 let rules: RuleView[] = [];
 let selectedRuleCodes = new Set<string>();
 let loadedFiles: LoadedFile[] = [];
 let sourceLabel = "";
 let lastReportMarkdown = "";
+let rerunTimer: number | undefined;
+let runSequence = 0;
+let runInProgress = false;
 
 const presetProfiles = {
   essential: {
@@ -123,51 +154,48 @@ async function boot() {
   const linter = new PaperLinter();
   const data = JSON.parse(linter.rules_json()) as { rules: RuleView[] };
   rules = data.rules;
-  setTheme(localStorage.getItem("paper-linter-theme") || "dark");
+  setTheme(localStorage.getItem("paper-linter-theme") || "light");
   bindEvents();
   renderRuleGroups();
   renderRules();
   applyPresetSelection(presetSelect.value);
-  statusEl.textContent = "ready";
+  statusEl.textContent = "waiting for source";
 }
 
 function bindEvents() {
   themeToggle.addEventListener("click", () => {
     setTheme(document.body.dataset.theme === "dark" ? "light" : "dark");
   });
-  allTexToggle.addEventListener("change", syncTexMode);
-  syncTexMode();
-
-  document.querySelectorAll<HTMLElement>("[data-mode]").forEach((button) => {
-    button.addEventListener("click", () => setInputMode(button.dataset.mode ?? "archive"));
+  allTexToggle.addEventListener("change", () => {
+    syncTexMode();
+    scheduleAutoRun();
   });
+  syncTexMode();
 
   archiveInput.addEventListener("change", async () => {
     const file = archiveInput.files?.[0];
-    if (file) await setArchiveFile(file);
+    if (file) await withSourceLoadError(() => setArchiveFile(file));
   });
   directoryInput.addEventListener("change", async () => {
     const files = Array.from(directoryInput.files ?? []);
-    if (files.length > 0) await setDirectoryFiles(files);
+    if (files.length > 0) await withSourceLoadError(() => setDirectoryFiles(files));
   });
 
-  bindDropZone(dropZone, (file) => setArchiveFile(file));
-  dropZone.addEventListener("click", () => archiveInput.click());
-  dropZone.addEventListener("keydown", (event) => activateFileInput(event, archiveInput));
-
-  directoryZone.addEventListener("click", openDirectory);
-  directoryZone.addEventListener("keydown", (event) => activateDirectoryInput(event));
+  bindDropZone(dropZone);
+  chooseArchiveBtn.addEventListener("click", () => archiveInput.click());
+  chooseDirectoryBtn.addEventListener("click", openDirectory);
 
   document.addEventListener("dragover", (event) => event.preventDefault());
   document.addEventListener("drop", async (event) => {
     if ((event.target as Element | null)?.closest("#drop-zone")) return;
     event.preventDefault();
     const file = event.dataTransfer?.files?.[0];
-    if (file) await setArchiveFile(file);
+    if (file) await withSourceLoadError(() => setArchiveFile(file));
   });
 
   presetSelect.addEventListener("change", () => {
     if (presetSelect.value !== "custom") applyPresetSelection(presetSelect.value);
+    scheduleAutoRun();
   });
   filterEl.addEventListener("input", renderRules);
   rulesEl.addEventListener("change", (event) => {
@@ -177,6 +205,7 @@ function bindEvents() {
     if (input.checked) selectedRuleCodes.add(input.value);
     else selectedRuleCodes.delete(input.value);
     syncSelectionState();
+    scheduleAutoRun();
   });
   ruleGroupsEl.addEventListener("change", (event) => {
     const input = event.target as HTMLInputElement;
@@ -190,11 +219,12 @@ function bindEvents() {
       else selectedRuleCodes.delete(rule.code);
     }
     syncSelectionState();
+    scheduleAutoRun();
   });
 
   form.addEventListener("submit", async (event) => {
     event.preventDefault();
-    await runLinter();
+    scheduleAutoRun(0);
   });
   copyReportBtn.addEventListener("click", () => {
     void copyReport();
@@ -213,27 +243,17 @@ function syncTexMode() {
   document.querySelector('[data-mode-label="all"]')?.classList.toggle("active", allTexToggle.checked);
 }
 
-function setInputMode(mode: string) {
-  const directory = mode === "directory";
-  document.querySelectorAll<HTMLElement>("[data-mode]").forEach((item) => {
-    item.classList.toggle("active", item.dataset.mode === mode);
-  });
-  archivePanel.hidden = directory;
-  directoryPanel.hidden = !directory;
-}
-
 async function setArchiveFile(file: File) {
-  setInputMode("archive");
   statusEl.textContent = "reading archive...";
-  loadedFiles = stripCommonRoot(await extractArchive(file));
+  loadedFiles = prepareLoadedFiles(await extractArchive(file));
   sourceLabel = `uploaded archive ${file.name}`;
   dropName.textContent = `${file.name} (${formatBytes(file.size)})`;
   dropZone.classList.add("has-file");
   statusEl.textContent = `${loadedFiles.length} file(s) ready`;
+  runNow();
 }
 
 async function setDirectoryFiles(files: File[]) {
-  setInputMode("directory");
   statusEl.textContent = "reading directory...";
   const loaded = await Promise.all(
     files.map(async (file) => ({
@@ -241,11 +261,12 @@ async function setDirectoryFiles(files: File[]) {
       bytes: new Uint8Array(await file.arrayBuffer()),
     })),
   );
-  loadedFiles = stripCommonRoot(loaded);
+  loadedFiles = prepareLoadedFiles(loaded);
   sourceLabel = `uploaded directory ${commonPrefixLabel(files)}`;
-  directoryName.textContent = `${commonPrefixLabel(files)} (${loadedFiles.length} files)`;
-  directoryZone.classList.add("has-file");
+  dropName.textContent = `${commonPrefixLabel(files)} (${loadedFiles.length} files)`;
+  dropZone.classList.add("has-file");
   statusEl.textContent = `${loadedFiles.length} file(s) ready`;
+  runNow();
 }
 
 async function openDirectory() {
@@ -254,15 +275,15 @@ async function openDirectory() {
     return;
   }
   try {
-    setInputMode("directory");
     statusEl.textContent = "reading directory...";
     const handle = await window.showDirectoryPicker({ mode: "read" });
     const loaded = await readDirectoryHandle(handle);
-    loadedFiles = stripCommonRoot(loaded);
+    loadedFiles = prepareLoadedFiles(loaded);
     sourceLabel = `opened directory ${handle.name}`;
-    directoryName.textContent = `${handle.name} (${loadedFiles.length} files)`;
-    directoryZone.classList.add("has-file");
+    dropName.textContent = `${handle.name} (${loadedFiles.length} files)`;
+    dropZone.classList.add("has-file");
     statusEl.textContent = `${loadedFiles.length} file(s) ready`;
+    runNow();
   } catch (error) {
     if (isAbortError(error)) {
       statusEl.textContent = loadedFiles.length > 0 ? `${loadedFiles.length} file(s) ready` : "ready";
@@ -288,7 +309,7 @@ async function readDirectoryHandle(handle: FileSystemDirectoryHandle, prefix = h
   return files;
 }
 
-function bindDropZone(zone: HTMLElement, onFile: (file: File) => Promise<void>) {
+function bindDropZone(zone: HTMLElement) {
   ["dragenter", "dragover"].forEach((eventName) => {
     zone.addEventListener(eventName, (event) => {
       event.preventDefault();
@@ -305,8 +326,13 @@ function bindDropZone(zone: HTMLElement, onFile: (file: File) => Promise<void>) 
   });
   zone.addEventListener("drop", async (event) => {
     const dragEvent = event as DragEvent;
+    const directoryFiles = await droppedDirectoryFiles(dragEvent.dataTransfer);
+    if (directoryFiles.length > 0) {
+      await withSourceLoadError(() => setDroppedDirectoryFiles(directoryFiles));
+      return;
+    }
     const file = dragEvent.dataTransfer?.files?.[0];
-    if (file) await onFile(file);
+    if (file) await withSourceLoadError(() => setArchiveFile(file));
   });
 }
 
@@ -322,9 +348,80 @@ async function activateDirectoryInput(event: KeyboardEvent) {
   await openDirectory();
 }
 
+async function setDroppedDirectoryFiles(files: LoadedFile[]) {
+  statusEl.textContent = "reading directory...";
+  const root = files[0]?.path.split("/")[0] || "directory";
+  loadedFiles = prepareLoadedFiles(files);
+  sourceLabel = `dropped directory ${root}`;
+  dropName.textContent = `${root} (${loadedFiles.length} files)`;
+  dropZone.classList.add("has-file");
+  statusEl.textContent = `${loadedFiles.length} file(s) ready`;
+  runNow();
+}
+
+async function droppedDirectoryFiles(dataTransfer: DataTransfer | null): Promise<LoadedFile[]> {
+  const items = Array.from(dataTransfer?.items ?? []);
+  const entries = items
+    .map((item) => (item as DataTransferItem & { webkitGetAsEntry?: () => unknown }).webkitGetAsEntry?.())
+    .filter(Boolean);
+  if (!entries.some((entry) => isDroppedDirectoryEntry(entry))) return [];
+  const files: LoadedFile[] = [];
+  for (const entry of entries) {
+    files.push(...(await readDroppedEntry(entry, "")));
+  }
+  return files;
+}
+
+async function readDroppedEntry(entry: unknown, prefix: string): Promise<LoadedFile[]> {
+  const item = entry as {
+    isFile?: boolean;
+    isDirectory?: boolean;
+    name?: string;
+    file?: (success: (file: File) => void, error: (error: unknown) => void) => void;
+    createReader?: () => { readEntries: (success: (entries: unknown[]) => void, error: (error: unknown) => void) => void };
+  };
+  const name = item.name || "";
+  const path = [prefix, name].filter(Boolean).join("/");
+  if (item.isFile && item.file) {
+    const file = await new Promise<File>((resolve, reject) => item.file?.(resolve, reject));
+    return [{ path, bytes: new Uint8Array(await file.arrayBuffer()) }];
+  }
+  if (!item.isDirectory || !item.createReader) return [];
+  const entries = await readAllDroppedEntries(item.createReader());
+  const files: LoadedFile[] = [];
+  for (const child of entries) {
+    files.push(...(await readDroppedEntry(child, path)));
+  }
+  return files;
+}
+
+async function readAllDroppedEntries(reader: { readEntries: (success: (entries: unknown[]) => void, error: (error: unknown) => void) => void }) {
+  const entries: unknown[] = [];
+  while (true) {
+    const batch = await new Promise<unknown[]>((resolve, reject) => reader.readEntries(resolve, reject));
+    if (batch.length === 0) return entries;
+    entries.push(...batch);
+  }
+}
+
+function isDroppedDirectoryEntry(entry: unknown) {
+  return Boolean((entry as { isDirectory?: boolean }).isDirectory);
+}
+
+async function withSourceLoadError(action: () => Promise<void>) {
+  try {
+    await action();
+  } catch (error) {
+    reportEl.textContent = error instanceof Error ? error.message : String(error);
+    reportEl.classList.remove("empty");
+    lastReportMarkdown = "";
+    copyReportBtn.disabled = true;
+    statusEl.textContent = "failed";
+  }
+}
+
 async function extractArchive(file: File): Promise<LoadedFile[]> {
   const bytes = new Uint8Array(await file.arrayBuffer());
-  enforceLimit(bytes.length);
   const lower = file.name.toLowerCase();
   if (lower.endsWith(".zip") || bytes[0] === 0x50 && bytes[1] === 0x4b) {
     return Object.entries(unzipSync(bytes))
@@ -359,15 +456,51 @@ function looksLikeTar(bytes: Uint8Array) {
   return marker === "ustar" || bytes.slice(0, 512).some((byte) => byte === 0);
 }
 
-async function runLinter() {
+function scheduleAutoRun(delay = 250) {
   if (loadedFiles.length === 0) {
-    statusEl.textContent = "choose an archive or directory";
+    statusEl.textContent = "waiting for source";
     return;
   }
+  if (!runInProgress) {
+    runNow();
+    return;
+  }
+  runSequence += 1;
+  if (rerunTimer !== undefined) window.clearTimeout(rerunTimer);
+  rerunTimer = window.setTimeout(() => {
+    rerunTimer = undefined;
+    runNow();
+  }, delay);
+}
+
+function runNow() {
+  if (loadedFiles.length === 0) {
+    statusEl.textContent = "waiting for source";
+    return;
+  }
+  if (runInProgress) {
+    scheduleAutoRun();
+    return;
+  }
+  const runId = ++runSequence;
+  void runLinter(runId);
+}
+
+async function runLinter(runId: number) {
+  if (loadedFiles.length === 0) {
+    statusEl.textContent = "waiting for source";
+    return;
+  }
+  runInProgress = true;
   syncSelectedRules();
-  statusEl.textContent = "running...";
-  reportEl.textContent = "Running linter...";
-  reportEl.classList.add("empty");
+  let runningShown = false;
+  const runningTimer = window.setTimeout(() => {
+    if (runId !== runSequence) return;
+    runningShown = true;
+    statusEl.textContent = "running...";
+    reportEl.textContent = "Running linter...";
+    reportEl.classList.add("empty");
+  }, 250);
   lastReportMarkdown = "";
   copyReportBtn.disabled = true;
 
@@ -391,14 +524,20 @@ async function runLinter() {
       ),
     ) as CheckOutput;
     if (output.error) throw new Error(output.error);
+    if (runId !== runSequence) return;
     renderResult(output);
-    statusEl.textContent = "done";
+    statusEl.textContent = "";
   } catch (error) {
+    if (runId !== runSequence) return;
     reportEl.textContent = error instanceof Error ? error.message : String(error);
     reportEl.classList.remove("empty");
     lastReportMarkdown = "";
     copyReportBtn.disabled = true;
     statusEl.textContent = "failed";
+  } finally {
+    window.clearTimeout(runningTimer);
+    if (!runningShown && runId === runSequence) statusEl.textContent = statusEl.textContent === "failed" ? "failed" : "";
+    runInProgress = false;
   }
 }
 
@@ -721,6 +860,21 @@ function renderInline(value: string) {
   return escaped.replace(/`([^`]+)`/g, "<code>$1</code>");
 }
 
+function prepareLoadedFiles(files: LoadedFile[]) {
+  const filtered = files.filter((file) => shouldKeepSourceFile(file.path));
+  if (filtered.length === 0) throw new Error("no usable source files found after excluding generated files");
+  return stripCommonRoot(filtered);
+}
+
+function shouldKeepSourceFile(path: string) {
+  const normalized = normalizePath(path);
+  const lower = normalized.toLowerCase();
+  if (EXCLUDED_PATH_PREFIXES.some((prefix) => lower.startsWith(prefix))) return false;
+  const parts = lower.split("/");
+  if (parts.some((part) => EXCLUDED_PATH_PARTS.has(part))) return false;
+  return ![...EXCLUDED_FILE_EXTENSIONS].some((extension) => lower.endsWith(extension));
+}
+
 function stripCommonRoot(files: LoadedFile[]) {
   const total = files.reduce((sum, file) => sum + file.bytes.length, 0);
   enforceLimit(total);
@@ -746,7 +900,9 @@ function isAbortError(error: unknown) {
 }
 
 function enforceLimit(bytes: number) {
-  if (bytes > MAX_UPLOAD_BYTES) throw new Error("input exceeds the 100 MB limit");
+  if (bytes > MAX_UPLOAD_BYTES) {
+    throw new Error(`input exceeds the ${formatBytes(MAX_UPLOAD_BYTES)} limit after excluding generated files`);
+  }
 }
 
 function formatBytes(bytes: number) {

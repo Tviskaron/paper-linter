@@ -12,7 +12,7 @@ use crate::rule_policy;
 use crate::rules::{all_project_rules, all_rules, rule_infos};
 
 const VIRTUAL_ROOT: &str = "/project";
-const INPUT_LIMIT_BYTES: usize = 100 * 1024 * 1024;
+const INPUT_LIMIT_BYTES: usize = 250 * 1024 * 1024;
 
 #[cfg(feature = "web")]
 use wasm_bindgen::prelude::*;
@@ -38,7 +38,7 @@ impl PaperLinter {
         let previous = self.files.get(&normalized).map_or(0, Vec::len);
         let total = self.total_bytes - previous + bytes.len();
         if total > INPUT_LIMIT_BYTES {
-            return Err("input exceeds the 100 MB limit".to_string());
+            return Err("input exceeds the 250 MB limit after excluding generated files".to_string());
         }
         self.files.insert(normalized, bytes.to_vec());
         self.total_bytes = total;

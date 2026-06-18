@@ -8,44 +8,36 @@
     <script type="module" src="./src/main.ts"></script>
   </head>
   <body>
-    <header>
+    <header class="app-header">
       <div class="topbar">
         <div class="brand">
           <img class="brand-logo" src="./assets/logo.svg" alt="Paper Linter" />
-          <div class="subtitle">Run structure, formatting, citation, figure, and project checks against LaTeX paper sources.</div>
         </div>
         <div class="header-actions">
           <button id="theme-toggle" class="theme-toggle" type="button" aria-pressed="false">Light mode</button>
-          <div class="subtitle">Static WASM app</div>
         </div>
       </div>
     </header>
 
-    <main>
-      <aside>
+    <main class="app-shell">
+      <aside class="control-panel">
         <form id="lint-form">
-          <fieldset>
-            <legend>Input</legend>
-            <div class="segmented" role="tablist" aria-label="Input mode">
-              <button type="button" class="active" data-mode="archive">Archive</button>
-              <button type="button" data-mode="directory" title="Browsers may ask for confirmation before exposing folder files to this local WebAssembly app.">Directory</button>
-            </div>
-
-            <div id="archive-panel">
-              <div class="field-label">Source archive</div>
-              <input id="archive-input" class="visually-hidden" type="file" accept=".zip,.tar,.gz,.tgz,.tar.gz,application/zip,application/gzip" />
-              <div id="drop-zone" class="drop-zone" role="button" tabindex="0" aria-controls="archive-input">
-                <strong>Drop archive</strong>
-                <span id="drop-name">.zip, .tar, .tar.gz, .tgz</span>
+          <fieldset class="panel-section input-section">
+            <legend>Source</legend>
+            <input id="archive-input" class="visually-hidden" type="file" accept=".zip,.tar,.gz,.tgz,.tar.gz,application/zip,application/gzip" />
+            <input id="directory-input" class="visually-hidden" type="file" webkitdirectory multiple />
+            <div id="drop-zone" class="drop-zone">
+              <div class="drop-center">
+                <strong>Upload source</strong>
+                <span id="drop-name">Drop here</span>
               </div>
-            </div>
-
-            <div id="directory-panel" hidden>
-              <div class="field-label">Source directory</div>
-              <input id="directory-input" class="visually-hidden" type="file" webkitdirectory multiple />
-              <div id="directory-zone" class="drop-zone" role="button" tabindex="0" aria-controls="directory-input">
-                <strong>Choose folder</strong>
-                <span id="directory-name">Open a local paper source directory</span>
+              <div class="source-actions" aria-label="Choose source">
+                <button id="choose-archive" class="source-choice" type="button">
+                  <strong>Archive</strong>
+                </button>
+                <button id="choose-directory" class="source-choice" type="button">
+                  <strong>Folder</strong>
+                </button>
               </div>
             </div>
 
@@ -70,17 +62,14 @@
             </div>
           </fieldset>
 
-          <div class="actions">
-            <button class="primary" type="submit">Run linter</button>
-            <span id="status" class="status"></span>
-          </div>
+          <span id="status" class="status visually-hidden" aria-live="polite"></span>
 
-          <fieldset>
+          <fieldset class="panel-section">
             <legend>Rule Groups</legend>
             <div id="rule-groups" class="group-grid"></div>
           </fieldset>
 
-          <fieldset>
+          <fieldset class="panel-section">
             <legend>Rules</legend>
             <div class="rule-toolbar">
               <input id="rule-filter" type="text" placeholder="Filter by code or name" />
@@ -93,7 +82,7 @@
 
       <section class="report">
         <div class="report-head">
-          <div>
+          <div class="report-heading">
             <div class="report-title-row">
               <div class="report-title">Report</div>
               <button id="copy-report" class="icon-button" type="button" aria-label="Copy report as Markdown" title="Copy report as Markdown" disabled>

@@ -1,8 +1,9 @@
 {
+  "type": "module",
   "scripts": {
     "build:wasm": "wasm-pack build . --target web --out-dir web/pkg --no-default-features --features web",
-    "dev": "npm run build:wasm && vite --host 127.0.0.1 web",
-    "build": "npm run build:wasm && vite build web"
+    "dev": "npm run build:wasm && vite --host 127.0.0.1",
+    "build": "npm run build:wasm && vite build"
   },
   "dependencies": {
     "@vitejs/plugin-basic-ssl": "^2.1.0",

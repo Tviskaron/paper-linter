@@ -81,8 +81,8 @@ fn read_image_dimensions(path: &Path) -> Option<ImageDimensions> {
 fn read_image_dimensions_from_header(path: &Path, header: &[u8]) -> Option<ImageDimensions> {
     let extension = path.extension()?.to_str()?.to_ascii_lowercase();
     match extension.as_str() {
-        "png" => png_dimensions(&header),
-        "jpg" | "jpeg" => jpeg_dimensions(&header),
+        "png" => png_dimensions(header),
+        "jpg" | "jpeg" => jpeg_dimensions(header),
         _ => None,
     }
 }

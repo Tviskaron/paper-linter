@@ -77,14 +77,14 @@ fn validate_image_header(path: &Path, header: &[u8]) -> Option<&'static str> {
     }
     match extension.as_str() {
         "png" => {
-            if !is_valid_png(&header) {
+            if !is_valid_png(header) {
                 Some("invalid PNG header")
             } else {
                 None
             }
         }
         "jpg" | "jpeg" => {
-            if !is_valid_jpeg(&header) {
+            if !is_valid_jpeg(header) {
                 Some("invalid JPEG header")
             } else {
                 None

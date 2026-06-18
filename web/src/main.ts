@@ -153,8 +153,8 @@ function bindEvents() {
   dropZone.addEventListener("click", () => archiveInput.click());
   dropZone.addEventListener("keydown", (event) => activateFileInput(event, archiveInput));
 
-  directoryZone.addEventListener("click", () => directoryInput.click());
-  directoryZone.addEventListener("keydown", (event) => activateFileInput(event, directoryInput));
+  directoryZone.addEventListener("click", openDirectory);
+  directoryZone.addEventListener("keydown", (event) => activateDirectoryInput(event));
 
   document.addEventListener("dragover", (event) => event.preventDefault());
   document.addEventListener("drop", async (event) => {
@@ -243,6 +243,46 @@ async function setDirectoryFiles(files: File[]) {
   statusEl.textContent = `${loadedFiles.length} file(s) ready`;
 }
 
+async function openDirectory() {
+  if (!window.showDirectoryPicker) {
+    directoryInput.click();
+    return;
+  }
+  try {
+    setInputMode("directory");
+    statusEl.textContent = "reading directory...";
+    const handle = await window.showDirectoryPicker({ mode: "read" });
+    const loaded = await readDirectoryHandle(handle);
+    loadedFiles = stripCommonRoot(loaded);
+    sourceLabel = `opened directory ${handle.name}`;
+    directoryName.textContent = `${handle.name} (${loadedFiles.length} files)`;
+    directoryZone.classList.add("has-file");
+    statusEl.textContent = `${loadedFiles.length} file(s) ready`;
+  } catch (error) {
+    if (isAbortError(error)) {
+      statusEl.textContent = loadedFiles.length > 0 ? `${loadedFiles.length} file(s) ready` : "ready";
+      return;
+    }
+    reportEl.textContent = error instanceof Error ? error.message : String(error);
+    reportEl.classList.remove("empty");
+    statusEl.textContent = "failed";
+  }
+}
+
+async function readDirectoryHandle(handle: FileSystemDirectoryHandle, prefix = handle.name): Promise<LoadedFile[]> {
+  const files: LoadedFile[] = [];
+  for await (const [name, entry] of handle.entries()) {
+    const path = `${prefix}/${name}`;
+    if (entry.kind === "directory") {
+      files.push(...(await readDirectoryHandle(entry, path)));
+      continue;
+    }
+    const file = await entry.getFile();
+    files.push({ path, bytes: new Uint8Array(await file.arrayBuffer()) });
+  }
+  return files;
+}
+
 function bindDropZone(zone: HTMLElement, onFile: (file: File) => Promise<void>) {
   ["dragenter", "dragover"].forEach((eventName) => {
     zone.addEventListener(eventName, (event) => {
@@ -269,6 +309,12 @@ function activateFileInput(event: KeyboardEvent, input: HTMLInputElement) {
   if (event.key !== "Enter" && event.key !== " ") return;
   event.preventDefault();
   input.click();
+}
+
+async function activateDirectoryInput(event: KeyboardEvent) {
+  if (event.key !== "Enter" && event.key !== " ") return;
+  event.preventDefault();
+  await openDirectory();
 }
 
 async function extractArchive(file: File): Promise<LoadedFile[]> {
@@ -666,6 +712,10 @@ function normalizePath(path: string) {
 function commonPrefixLabel(files: File[]) {
   const first = files[0]?.webkitRelativePath?.split("/")?.[0];
   return first || "directory";
+}
+
+function isAbortError(error: unknown) {
+  return error instanceof DOMException && error.name === "AbortError";
 }
 
 function enforceLimit(bytes: number) {

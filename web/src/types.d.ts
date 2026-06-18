@@ -17,3 +17,19 @@ declare module "../pkg/paper_linter.js" {
     rules_json(): string;
   }
 }
+
+interface FileSystemFileHandle {
+  kind: "file";
+  name: string;
+  getFile(): Promise<File>;
+}
+
+interface FileSystemDirectoryHandle {
+  kind: "directory";
+  name: string;
+  entries(): AsyncIterableIterator<[string, FileSystemFileHandle | FileSystemDirectoryHandle]>;
+}
+
+interface Window {
+  showDirectoryPicker?: (options?: { mode?: "read" | "readwrite" }) => Promise<FileSystemDirectoryHandle>;
+}

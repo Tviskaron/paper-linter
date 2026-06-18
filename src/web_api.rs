@@ -1,4 +1,4 @@
-use std::collections::{BTreeMap, BTreeSet, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashSet, VecDeque};
 use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
@@ -6,13 +6,22 @@ use serde::{Deserialize, Serialize};
 use crate::checker::CheckResult;
 use crate::config::LinterConfig;
 use crate::diagnostic::{Diagnostic, Severity};
-use crate::latex::scan::scan_latex_with_aliases;
+use crate::latex::scan::{scan_latex_with_aliases, ScanAliases};
+use crate::latex::significant::{mask_discarded_macro_arguments, mask_inactive_regions};
 use crate::project::{normalize_virtual_path, ProjectIndex};
 use crate::rule_policy;
 use crate::rules::{all_project_rules, all_rules, rule_infos};
 
 const VIRTUAL_ROOT: &str = "/project";
 const INPUT_LIMIT_BYTES: usize = 250 * 1024 * 1024;
+const MAIN_LIKE_NAMES: [&str; 5] = [
+    "main.tex",
+    "paper.tex",
+    "article.tex",
+    "manuscript.tex",
+    "ms.tex",
+];
+const MAX_ROOT_VIEW_COUNT: usize = 4;
 
 #[cfg(feature = "web")]
 use wasm_bindgen::prelude::*;
@@ -95,13 +104,16 @@ impl PaperLinter {
         }
         let strict = options.strict || config.strict;
 
-        let root_files = choose_root_files(&self.files, options.all_tex);
+        let graph = VirtualGraph::build(&self.files, &config.aliases);
+        let active_view = graph.active_view(&options)?;
+        let views = graph.views_for_active(&active_view);
+        let root_files = active_view.root_files(&graph);
         let project = ProjectIndex::build_virtual_with_aliases(
             PathBuf::from(VIRTUAL_ROOT),
             &root_files,
             &self.files,
             &config.aliases,
-            options.all_tex,
+            active_view.all_tex,
         )
         .map_err(|error| error.to_string())?;
 
@@ -212,6 +224,8 @@ impl PaperLinter {
                 .map(|path| path.to_string_lossy().to_string())
                 .collect(),
             report: WebReport { by_rule },
+            active_view_id: active_view.id,
+            views,
         })
     }
 }
@@ -225,6 +239,7 @@ struct WebCheckOptions {
     strict: bool,
     all_rules: bool,
     all_tex: bool,
+    root: Option<String>,
 }
 
 impl Default for WebCheckOptions {
@@ -236,6 +251,7 @@ impl Default for WebCheckOptions {
             strict: false,
             all_rules: false,
             all_tex: false,
+            root: None,
         }
     }
 }
@@ -247,6 +263,8 @@ struct WebCheckOutput {
     summary: WebSummary,
     checked_files: Vec<String>,
     report: WebReport,
+    active_view_id: String,
+    views: Vec<WebProjectView>,
 }
 
 #[derive(Debug, Serialize)]
@@ -266,6 +284,17 @@ struct WebRuleCount {
     code: &'static str,
     name: &'static str,
     count: usize,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct WebProjectView {
+    id: String,
+    kind: &'static str,
+    label: String,
+    root: Option<String>,
+    file_count: usize,
+    reason: String,
+    preferred: bool,
 }
 
 #[derive(Debug, Serialize)]
@@ -305,41 +334,405 @@ fn normalize_upload_path(path: &str) -> Result<PathBuf, String> {
     Ok(normalized)
 }
 
-fn choose_root_files(files: &BTreeMap<PathBuf, Vec<u8>>, all_tex: bool) -> Vec<PathBuf> {
-    let tex_files: Vec<_> = files
-        .keys()
-        .filter(|path| is_ext(path, "tex"))
-        .cloned()
-        .collect();
-    if all_tex {
-        return tex_files;
+#[derive(Debug, Clone)]
+struct ActiveView {
+    id: String,
+    root: Option<PathBuf>,
+    all_tex: bool,
+}
+
+impl ActiveView {
+    fn root_files(&self, graph: &VirtualGraph) -> Vec<PathBuf> {
+        if self.all_tex {
+            return graph.tex_files.iter().cloned().collect();
+        }
+        self.root.iter().cloned().collect()
     }
-    let mut document_roots: Vec<_> = tex_files
+}
+
+#[derive(Debug, Clone)]
+struct RootCandidate {
+    root: PathBuf,
+    reachable: BTreeSet<PathBuf>,
+    reason: String,
+    score: RootScore,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+struct RootScore {
+    source: i32,
+    main_like: i32,
+    top_level: i32,
+    ordinary_name: i32,
+    fanout: i32,
+}
+
+#[derive(Debug)]
+struct VirtualGraph {
+    tex_files: BTreeSet<PathBuf>,
+    candidates: Vec<RootCandidate>,
+}
+
+impl VirtualGraph {
+    fn build(files: &BTreeMap<PathBuf, Vec<u8>>, aliases: &ScanAliases) -> Self {
+        let tex_files = files
+            .keys()
+            .filter(|path| is_ext(path, "tex"))
+            .cloned()
+            .collect::<BTreeSet<_>>();
+        let edges = build_virtual_edges(files, &tex_files, aliases);
+        let candidates = rank_virtual_roots(files, &tex_files, &edges);
+        Self {
+            tex_files,
+            candidates,
+        }
+    }
+
+    fn views(&self) -> Vec<WebProjectView> {
+        if self.tex_files.is_empty() {
+            return Vec::new();
+        }
+
+        let root_views = self.root_views();
+        if root_views.len() <= 1 {
+            return root_views;
+        }
+
+        let mut views = Vec::with_capacity(root_views.len() + 1);
+        views.push(root_views[0].clone());
+        views.push(self.all_view());
+        views.extend(root_views.into_iter().skip(1));
+        views
+    }
+
+    fn views_for_active(&self, active_view: &ActiveView) -> Vec<WebProjectView> {
+        let mut views = self.views();
+        if active_view.all_tex
+            && !self.tex_files.is_empty()
+            && !views.iter().any(|view| view.id == "all")
+        {
+            views.push(self.all_view());
+        }
+        views
+    }
+
+    fn all_view(&self) -> WebProjectView {
+        WebProjectView {
+            id: "all".to_string(),
+            kind: "all",
+            label: "All .tex".to_string(),
+            root: None,
+            file_count: self.tex_files.len(),
+            reason: "all source .tex files".to_string(),
+            preferred: false,
+        }
+    }
+
+    fn active_view(&self, options: &WebCheckOptions) -> Result<ActiveView, String> {
+        let views = self.views();
+        if self.tex_files.is_empty() {
+            return Ok(ActiveView {
+                id: "all".to_string(),
+                root: None,
+                all_tex: true,
+            });
+        }
+
+        if options.all_tex {
+            return Ok(ActiveView {
+                id: "all".to_string(),
+                root: None,
+                all_tex: true,
+            });
+        }
+
+        if let Some(root) = options
+            .root
+            .as_deref()
+            .filter(|root| !root.trim().is_empty())
+        {
+            let normalized = normalize_upload_path(root)?;
+            if !self.tex_files.contains(&normalized) {
+                return Err(format!("selected root '{}' was not found", root));
+            }
+            let id = root_view_id(&normalized);
+            return Ok(ActiveView {
+                id,
+                root: Some(normalized),
+                all_tex: false,
+            });
+        }
+
+        if let Some(view) = views.iter().find(|view| view.kind == "root") {
+            let root = view
+                .root
+                .as_deref()
+                .ok_or_else(|| "root view is missing root path".to_string())?;
+            return Ok(ActiveView {
+                id: view.id.clone(),
+                root: Some(normalize_upload_path(root)?),
+                all_tex: false,
+            });
+        }
+
+        Ok(ActiveView {
+            id: "all".to_string(),
+            root: None,
+            all_tex: true,
+        })
+    }
+
+    fn root_views(&self) -> Vec<WebProjectView> {
+        let mut seen_reachable = BTreeSet::new();
+        let mut views = Vec::new();
+        for candidate in &self.candidates {
+            if views.len() >= MAX_ROOT_VIEW_COUNT {
+                break;
+            }
+            let key = candidate
+                .reachable
+                .iter()
+                .map(|path| display_relative(path))
+                .collect::<Vec<_>>()
+                .join("\n");
+            if !seen_reachable.insert(key) {
+                continue;
+            }
+            views.push(WebProjectView {
+                id: root_view_id(&candidate.root),
+                kind: "root",
+                label: root_label(&candidate.root),
+                root: Some(display_relative(&candidate.root)),
+                file_count: candidate.reachable.len(),
+                reason: candidate.reason.clone(),
+                preferred: views.is_empty(),
+            });
+        }
+        views
+    }
+}
+
+fn build_virtual_edges(
+    files: &BTreeMap<PathBuf, Vec<u8>>,
+    tex_files: &BTreeSet<PathBuf>,
+    aliases: &ScanAliases,
+) -> BTreeMap<PathBuf, BTreeSet<PathBuf>> {
+    let mut edges = BTreeMap::new();
+    for path in tex_files {
+        edges.entry(path.clone()).or_insert_with(BTreeSet::new);
+        let Some(content) = active_uploaded_tex(files, path) else {
+            continue;
+        };
+        let scan = scan_latex_with_aliases(path.clone(), &content, aliases);
+        for include in scan.includes {
+            if let Some(child) =
+                resolve_uploaded_tex(Path::new(VIRTUAL_ROOT), path, &include.raw_path, files)
+            {
+                if tex_files.contains(&child) {
+                    edges.entry(path.clone()).or_default().insert(child);
+                }
+            }
+        }
+    }
+    edges
+}
+
+fn rank_virtual_roots(
+    files: &BTreeMap<PathBuf, Vec<u8>>,
+    tex_files: &BTreeSet<PathBuf>,
+    edges: &BTreeMap<PathBuf, BTreeSet<PathBuf>>,
+) -> Vec<RootCandidate> {
+    let mut candidates = BTreeMap::<PathBuf, (String, i32)>::new();
+
+    if let Some(root) = root_from_uploaded_readme(files, tex_files) {
+        candidates.insert(root, ("00README.json".to_string(), 1000));
+    }
+    for root in roots_from_uploaded_magic_comments(files, tex_files) {
+        candidates
+            .entry(root)
+            .or_insert_with(|| ("magic comment".to_string(), 950));
+    }
+
+    let document_roots = tex_files
         .iter()
         .filter(|path| {
-            read_uploaded_string(files, path).is_some_and(|content| {
-                content.contains("\\documentclass") || content.contains("\\begin{document}")
-            })
+            active_uploaded_tex(files, path).is_some_and(|content| declares_document(&content))
         })
         .cloned()
-        .collect();
-    if document_roots.is_empty() {
-        document_roots = tex_files;
+        .collect::<Vec<_>>();
+    for root in document_roots {
+        candidates
+            .entry(root)
+            .or_insert_with(|| ("document root".to_string(), 800));
     }
-    document_roots.sort_by_key(|path| {
-        let name = path
-            .file_name()
-            .and_then(|name| name.to_str())
-            .unwrap_or("");
-        (
-            !matches!(
-                name.to_ascii_lowercase().as_str(),
-                "main.tex" | "paper.tex" | "article.tex" | "manuscript.tex" | "ms.tex"
-            ),
-            path.clone(),
-        )
+
+    let mut ranked = candidates
+        .into_iter()
+        .map(|(root, (reason, source_score))| {
+            let reachable = collect_virtual_reachable(&root, edges);
+            let score = score_root(&root, &reachable, source_score);
+            RootCandidate {
+                root,
+                reachable,
+                reason,
+                score,
+            }
+        })
+        .collect::<Vec<_>>();
+
+    ranked.sort_by(|left, right| {
+        right
+            .score
+            .cmp(&left.score)
+            .then_with(|| left.root.cmp(&right.root))
     });
-    document_roots.into_iter().take(1).collect()
+    ranked
+}
+
+fn score_root(root: &Path, reachable: &BTreeSet<PathBuf>, source: i32) -> RootScore {
+    RootScore {
+        source,
+        main_like: i32::from(
+            root.file_name()
+                .and_then(|name| name.to_str())
+                .is_some_and(is_main_like_name),
+        ),
+        top_level: i32::from(root.parent() == Some(Path::new(VIRTUAL_ROOT))),
+        ordinary_name: i32::from(!is_likely_alternate_or_service_tex(root)),
+        fanout: reachable.len() as i32,
+    }
+}
+
+fn collect_virtual_reachable(
+    root: &Path,
+    edges: &BTreeMap<PathBuf, BTreeSet<PathBuf>>,
+) -> BTreeSet<PathBuf> {
+    let root = normalize_virtual_path(root);
+    let mut reachable = BTreeSet::new();
+    let mut queue = VecDeque::new();
+    reachable.insert(root.clone());
+    queue.push_back(root);
+
+    while let Some(current) = queue.pop_front() {
+        if let Some(children) = edges.get(&current) {
+            for child in children {
+                if reachable.insert(child.clone()) {
+                    queue.push_back(child.clone());
+                }
+            }
+        }
+    }
+    reachable
+}
+
+fn root_from_uploaded_readme(
+    files: &BTreeMap<PathBuf, Vec<u8>>,
+    tex_files: &BTreeSet<PathBuf>,
+) -> Option<PathBuf> {
+    let content = read_uploaded_string(files, Path::new("00README.json"))?;
+    let data: serde_json::Value = serde_json::from_str(&content).ok()?;
+    for source in data.get("sources")?.as_array()? {
+        if source.get("usage")?.as_str()? != "toplevel" {
+            continue;
+        }
+        let filename = source.get("filename")?.as_str()?;
+        let candidate = normalize_virtual_path(Path::new(filename));
+        if tex_files.contains(&candidate) {
+            return Some(candidate);
+        }
+    }
+    None
+}
+
+fn roots_from_uploaded_magic_comments(
+    files: &BTreeMap<PathBuf, Vec<u8>>,
+    tex_files: &BTreeSet<PathBuf>,
+) -> Vec<PathBuf> {
+    let mut roots = Vec::new();
+    for path in tex_files {
+        let Some(content) = active_uploaded_tex(files, path) else {
+            continue;
+        };
+        for line in content.lines() {
+            let trimmed = line.trim();
+            let Some(comment) = trimmed.strip_prefix('%') else {
+                continue;
+            };
+            let comment = comment.trim_start();
+            let comment = comment.strip_prefix('!').unwrap_or(comment).trim_start();
+            let lower = comment.to_ascii_lowercase();
+            if !lower.starts_with("tex root") && !lower.starts_with("root") {
+                continue;
+            }
+            let Some((_, value)) = comment.split_once('=') else {
+                continue;
+            };
+            let value = value.trim().trim_matches('"').trim_matches('\'');
+            if let Some(root) = resolve_uploaded_tex(Path::new(VIRTUAL_ROOT), path, value, files) {
+                if tex_files.contains(&root) {
+                    roots.push(root);
+                }
+            }
+        }
+    }
+    roots.sort();
+    roots.dedup();
+    roots
+}
+
+fn active_uploaded_tex(files: &BTreeMap<PathBuf, Vec<u8>>, path: &Path) -> Option<String> {
+    let content = read_uploaded_string(files, path)?;
+    let content = mask_discarded_macro_arguments(&content);
+    Some(mask_inactive_regions(&content))
+}
+
+fn declares_document(content: &str) -> bool {
+    content.contains("\\documentclass") || content.contains("\\begin{document}")
+}
+
+fn is_main_like_name(name: &str) -> bool {
+    MAIN_LIKE_NAMES
+        .iter()
+        .any(|candidate| candidate.eq_ignore_ascii_case(name))
+}
+
+fn is_likely_alternate_or_service_tex(path: &Path) -> bool {
+    let keywords = [
+        "appendix",
+        "appendices",
+        "backup",
+        "camera-ready",
+        "cameraready",
+        "copy",
+        "draft",
+        "example",
+        "rebuttal",
+        "response",
+        "revision",
+        "sample",
+        "supp",
+        "supplement",
+        "supplementary",
+        "template",
+        "translation",
+        "translated",
+    ];
+
+    path.components().any(|component| {
+        let text = component.as_os_str().to_string_lossy().to_ascii_lowercase();
+        keywords.iter().any(|keyword| text.contains(keyword))
+    })
+}
+
+fn root_view_id(root: &Path) -> String {
+    format!("root:{}", display_relative(root))
+}
+
+fn root_label(root: &Path) -> String {
+    root.file_name()
+        .and_then(|name| name.to_str())
+        .map(str::to_string)
+        .unwrap_or_else(|| display_relative(root))
 }
 
 fn rule_enabled(
@@ -715,6 +1108,15 @@ mod tests {
         output
     }
 
+    fn check_error(files: &[(&str, &[u8])], options: &str) -> String {
+        let mut linter = PaperLinter::new();
+        for (path, bytes) in files {
+            linter.add_file(path, bytes).expect("file should add");
+        }
+        let output: Value = serde_json::from_str(&linter.check(options)).expect("valid output");
+        output["error"].as_str().unwrap().to_string()
+    }
+
     fn codes(output: &Value) -> Vec<String> {
         output["diagnostics"]
             .as_array()
@@ -760,6 +1162,161 @@ mod tests {
         );
 
         assert_eq!(output["summary"]["files_checked"], 2);
+    }
+
+    #[test]
+    fn exposes_ranked_report_views_for_multiple_roots() {
+        let output = check(
+            &[
+                (
+                    "main.tex",
+                    br"\documentclass{article}
+\begin{document}
+\input{sections/method}
+\end{document}
+",
+                ),
+                ("sections/method.tex", br"\section{Method}"),
+                (
+                    "paper-v2.tex",
+                    br"\documentclass{article}
+\begin{document}
+Second version.
+\end{document}
+",
+                ),
+            ],
+            r#"{"preset":null}"#,
+        );
+
+        assert_eq!(output["active_view_id"], "root:main.tex");
+        let views = output["views"].as_array().unwrap();
+        assert_eq!(views.len(), 3);
+        assert_eq!(views[0]["label"], "main.tex");
+        assert_eq!(views[0]["file_count"], 2);
+        assert_eq!(views[1]["id"], "all");
+        assert_eq!(views[1]["file_count"], 3);
+        assert_eq!(views[2]["label"], "paper-v2.tex");
+    }
+
+    #[test]
+    fn selected_root_checks_only_that_reachable_graph() {
+        let output = check(
+            &[
+                (
+                    "main.tex",
+                    br"\documentclass{article}
+\begin{document}
+\input{sections/method}
+\end{document}
+",
+                ),
+                ("sections/method.tex", br"\section{Method}"),
+                (
+                    "paper-v2.tex",
+                    br"\documentclass{article}
+\begin{document}
+Second version.
+\end{document}
+",
+                ),
+            ],
+            r#"{"preset":null,"root":"paper-v2.tex"}"#,
+        );
+
+        assert_eq!(output["active_view_id"], "root:paper-v2.tex");
+        assert_eq!(output["summary"]["files_checked"], 1);
+        assert_eq!(output["checked_files"], serde_json::json!(["paper-v2.tex"]));
+    }
+
+    #[test]
+    fn all_tex_view_checks_every_tex_file() {
+        let output = check(
+            &[
+                (
+                    "main.tex",
+                    br"\documentclass{article}
+\begin{document}
+\input{sections/method}
+\end{document}
+",
+                ),
+                ("sections/method.tex", br"\section{Method}"),
+                (
+                    "paper-v2.tex",
+                    br"\documentclass{article}
+\begin{document}
+Second version.
+\end{document}
+",
+                ),
+            ],
+            r#"{"preset":null,"all_tex":true}"#,
+        );
+
+        assert_eq!(output["active_view_id"], "all");
+        assert_eq!(output["summary"]["files_checked"], 3);
+    }
+
+    #[test]
+    fn loose_tex_files_do_not_become_root_tabs() {
+        let output = check(
+            &[
+                ("sections/intro.tex", br"\section{Intro}"),
+                ("sections/method.tex", br"\section{Method}"),
+                ("notes/old.tex", br"notes"),
+            ],
+            r#"{"preset":null}"#,
+        );
+
+        assert_eq!(output["active_view_id"], "all");
+        let views = output["views"].as_array().unwrap();
+        assert_eq!(views.len(), 1);
+        assert_eq!(views[0]["id"], "all");
+        assert_eq!(output["summary"]["files_checked"], 3);
+    }
+
+    #[test]
+    fn readme_root_does_not_duplicate_document_root_view() {
+        let output = check(
+            &[
+                (
+                    "00README.json",
+                    br#"{"sources":[{"usage":"toplevel","filename":"paper.tex"}]}"#,
+                ),
+                (
+                    "paper.tex",
+                    br"\documentclass{article}
+\begin{document}
+Body.
+\end{document}
+",
+                ),
+            ],
+            r#"{"preset":null}"#,
+        );
+
+        let views = output["views"].as_array().unwrap();
+        assert_eq!(views.len(), 1);
+        assert_eq!(views[0]["label"], "paper.tex");
+        assert_eq!(views[0]["reason"], "00README.json");
+    }
+
+    #[test]
+    fn invalid_selected_root_returns_error() {
+        let message = check_error(
+            &[(
+                "main.tex",
+                br"\documentclass{article}
+\begin{document}
+Body.
+\end{document}
+",
+            )],
+            r#"{"preset":null,"root":"missing.tex"}"#,
+        );
+
+        assert_eq!(message, "selected root 'missing.tex' was not found");
     }
 
     #[test]

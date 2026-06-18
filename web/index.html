@@ -50,16 +50,6 @@
                 <option value="polish">polish</option>
               </select>
             </label>
-
-            <div class="tex-mode" aria-label="TeX file selection mode">
-              <span class="tex-mode-label active" tabindex="0" data-mode-label="filtered" data-tooltip="Analyze only TeX files that are likely to belong to the main paper source.">filter .tex</span>
-              <label class="switch" aria-label="Toggle TeX file selection mode">
-                <input id="all-tex-toggle" type="checkbox" name="all_tex" value="true" />
-                <span class="switch-track"></span>
-                <span class="switch-thumb"></span>
-              </label>
-              <span class="tex-mode-label" tabindex="0" data-mode-label="all" data-tooltip="Analyze every .tex file in the archive, including samples, alternatives, and auxiliary source files.">all .tex</span>
-            </div>
           </fieldset>
 
           <span id="status" class="status visually-hidden" aria-live="polite"></span>
@@ -81,6 +71,7 @@
       </aside>
 
       <section class="report">
+        <div id="report-tabs" class="report-tabs" aria-label="Report views"></div>
         <div class="report-head">
           <div class="report-heading">
             <div class="report-title-row">

@@ -59,11 +59,23 @@ type CheckOutput = {
   error?: string;
   diagnostics?: Diagnostic[];
   checked_files?: string[];
+  active_view_id?: string;
+  views?: ReportView[];
   summary?: {
     files_checked: number;
     errors: number;
     warnings: number;
   };
+};
+
+type ReportView = {
+  id: string;
+  kind: "root" | "all";
+  label: string;
+  root?: string;
+  file_count: number;
+  reason: string;
+  preferred: boolean;
 };
 
 type LoadedFile = {
@@ -81,7 +93,7 @@ const reportEl = byId("report");
 const copyReportBtn = byId<HTMLButtonElement>("copy-report");
 const presetSelect = byId<HTMLSelectElement>("preset-select");
 const themeToggle = byId<HTMLButtonElement>("theme-toggle");
-const allTexToggle = byId<HTMLInputElement>("all-tex-toggle");
+const reportTabsEl = byId("report-tabs");
 const archiveInput = byId<HTMLInputElement>("archive-input");
 const directoryInput = byId<HTMLInputElement>("directory-input");
 const dropZone = byId("drop-zone");
@@ -94,6 +106,8 @@ let selectedRuleCodes = new Set<string>();
 let loadedFiles: LoadedFile[] = [];
 let sourceLabel = "";
 let lastReportMarkdown = "";
+let selectedReportViewId: string | null = null;
+let availableReportViews: ReportView[] = [];
 let rerunTimer: number | undefined;
 let runSequence = 0;
 let runInProgress = false;
@@ -166,12 +180,6 @@ function bindEvents() {
   themeToggle.addEventListener("click", () => {
     setTheme(document.body.dataset.theme === "dark" ? "light" : "dark");
   });
-  allTexToggle.addEventListener("change", () => {
-    syncTexMode();
-    scheduleAutoRun();
-  });
-  syncTexMode();
-
   archiveInput.addEventListener("change", async () => {
     const file = archiveInput.files?.[0];
     if (file) await withSourceLoadError(() => setArchiveFile(file));
@@ -229,6 +237,13 @@ function bindEvents() {
   copyReportBtn.addEventListener("click", () => {
     void copyReport();
   });
+  reportTabsEl.addEventListener("click", (event) => {
+    const button = (event.target as Element | null)?.closest<HTMLButtonElement>("[data-view-id]");
+    if (!button || button.dataset.viewId === selectedReportViewId) return;
+    selectedReportViewId = button.dataset.viewId ?? null;
+    renderReportTabs();
+    runNow();
+  });
 }
 
 function setTheme(theme: string) {
@@ -238,14 +253,10 @@ function setTheme(theme: string) {
   localStorage.setItem("paper-linter-theme", theme);
 }
 
-function syncTexMode() {
-  document.querySelector('[data-mode-label="filtered"]')?.classList.toggle("active", !allTexToggle.checked);
-  document.querySelector('[data-mode-label="all"]')?.classList.toggle("active", allTexToggle.checked);
-}
-
 async function setArchiveFile(file: File) {
   statusEl.textContent = "reading archive...";
   loadedFiles = prepareLoadedFiles(await extractArchive(file));
+  resetReportViews();
   sourceLabel = `uploaded archive ${file.name}`;
   dropName.textContent = `${file.name} (${formatBytes(file.size)})`;
   dropZone.classList.add("has-file");
@@ -262,6 +273,7 @@ async function setDirectoryFiles(files: File[]) {
     })),
   );
   loadedFiles = prepareLoadedFiles(loaded);
+  resetReportViews();
   sourceLabel = `uploaded directory ${commonPrefixLabel(files)}`;
   dropName.textContent = `${commonPrefixLabel(files)} (${loadedFiles.length} files)`;
   dropZone.classList.add("has-file");
@@ -279,6 +291,7 @@ async function openDirectory() {
     const handle = await window.showDirectoryPicker({ mode: "read" });
     const loaded = await readDirectoryHandle(handle);
     loadedFiles = prepareLoadedFiles(loaded);
+    resetReportViews();
     sourceLabel = `opened directory ${handle.name}`;
     dropName.textContent = `${handle.name} (${loadedFiles.length} files)`;
     dropZone.classList.add("has-file");
@@ -352,6 +365,7 @@ async function setDroppedDirectoryFiles(files: LoadedFile[]) {
   statusEl.textContent = "reading directory...";
   const root = files[0]?.path.split("/")[0] || "directory";
   loadedFiles = prepareLoadedFiles(files);
+  resetReportViews();
   sourceLabel = `dropped directory ${root}`;
   dropName.textContent = `${root} (${loadedFiles.length} files)`;
   dropZone.classList.add("has-file");
@@ -519,7 +533,7 @@ async function runLinter(runId: number) {
           ignore: [],
           strict: presetProfiles[presetSelect.value as keyof typeof presetProfiles]?.strict ?? false,
           all_rules: false,
-          all_tex: allTexToggle.checked,
+          ...selectedViewOptions(),
         }),
       ),
     ) as CheckOutput;
@@ -544,6 +558,8 @@ async function runLinter(runId: number) {
 function renderResult(output: CheckOutput) {
   const diagnostics = output.diagnostics ?? [];
   const checkedFiles = output.checked_files ?? [];
+  availableReportViews = output.views ?? [];
+  selectedReportViewId = output.active_view_id ?? selectedReportViewId;
   const filesChecked = output.summary?.files_checked ?? checkedFiles.length;
   const errors = output.summary?.errors ?? diagnostics.filter((diagnostic) => diagnostic.severity === "error").length;
   const warnings = output.summary?.warnings ?? diagnostics.filter((diagnostic) => diagnostic.severity === "warning").length;
@@ -551,10 +567,49 @@ function renderResult(output: CheckOutput) {
   byId("files").textContent = `files ${filesChecked}`;
   byId("errors").textContent = `errors ${errors}`;
   byId("warnings").textContent = `warnings ${warnings}`;
-  lastReportMarkdown = renderReportMarkdown(diagnostics, checkedFiles, filesChecked, errors, warnings);
+  renderReportTabs();
+  lastReportMarkdown = renderReportMarkdown(diagnostics, checkedFiles, filesChecked, errors, warnings, activeReportView());
   reportEl.innerHTML = renderMarkdown(lastReportMarkdown);
   reportEl.classList.remove("empty");
   copyReportBtn.disabled = false;
+}
+
+function selectedViewOptions() {
+  const selected = availableReportViews.find((view) => view.id === selectedReportViewId);
+  if (!selected) return { all_tex: false, root: null };
+  if (selected.kind === "all") return { all_tex: true, root: null };
+  return { all_tex: false, root: selected.root ?? null };
+}
+
+function activeReportView() {
+  return availableReportViews.find((view) => view.id === selectedReportViewId);
+}
+
+function resetReportViews() {
+  selectedReportViewId = null;
+  availableReportViews = [];
+  renderReportTabs();
+}
+
+function renderReportTabs() {
+  if (availableReportViews.length <= 1) {
+    reportTabsEl.innerHTML = "";
+    reportTabsEl.hidden = true;
+    return;
+  }
+
+  reportTabsEl.hidden = false;
+  reportTabsEl.innerHTML = availableReportViews.map((view) => {
+    const selected = view.id === selectedReportViewId;
+    const count = `${view.file_count} file${view.file_count === 1 ? "" : "s"}`;
+    const title = `${view.reason}; ${count}`;
+    return `
+      <button class="report-tab ${selected ? "active" : ""}" type="button" data-view-id="${escapeHtml(view.id)}" aria-pressed="${selected}" title="${escapeHtml(title)}">
+        <span>${escapeHtml(view.label)}</span>
+        <small>${count}</small>
+      </button>
+    `;
+  }).join("");
 }
 
 async function copyReport() {
@@ -681,10 +736,13 @@ function groupDescription(family: string) {
   return groupDescriptions[family] || "Checks related to this rule family.";
 }
 
-function renderReportMarkdown(diagnostics: Diagnostic[], checkedFiles: string[], filesChecked: number, errors: number, warnings: number) {
+function renderReportMarkdown(diagnostics: Diagnostic[], checkedFiles: string[], filesChecked: number, errors: number, warnings: number, view?: ReportView) {
   let output = "# Paper Linter Report\n\n";
   output += "## Summary\n\n";
   output += `checked ${filesChecked} file(s), ${errors} error(s), ${warnings} warning(s)\n\n`;
+  if (view) {
+    output += `view ${view.kind === "all" ? "all .tex" : `\`${view.root ?? view.label}\``}\n\n`;
+  }
   output += fileSummaryMarkdown(diagnostics, checkedFiles);
   if (diagnostics.length === 0) return output;
 

@@ -43,7 +43,6 @@
       <aside class="control-panel">
         <form id="lint-form">
           <fieldset class="panel-section input-section">
-            <legend>Source</legend>
             <input id="archive-input" class="visually-hidden" type="file" accept=".zip,.tar,.gz,.tgz,.tar.gz,application/zip,application/gzip" />
             <input id="directory-input" class="visually-hidden" type="file" webkitdirectory multiple />
             <div id="drop-zone" class="drop-zone">
@@ -70,19 +69,15 @@
               <span>Rules</span>
               <span id="rules-count" class="rules-count"></span>
             </legend>
-            <div class="profile-panel">
-              <div class="profile-row">
-                <div id="profile-options" class="profile-options" aria-label="Rule profile">
-                  <button type="button" data-profile="essential">Essential</button>
-                  <button type="button" data-profile="standard">Standard</button>
-                  <button type="button" data-profile="strict">Strict</button>
-                  <button type="button" data-profile="polish">Polish</button>
-                </div>
+            <div class="rule-scope-panel">
+              <div class="rule-scope-head">
+                <span>Quick selection</span>
                 <div class="profile-actions">
                   <button id="profile-clear" class="profile-action" type="button">Clear all</button>
                   <button id="profile-reset" class="profile-action" type="button" hidden>Reset</button>
                 </div>
               </div>
+              <div id="rule-domains" class="rule-domains" aria-label="Rule domains"></div>
             </div>
             <div class="rule-toolbar">
               <label>Search

@@ -469,62 +469,158 @@ select:focus {
   text-align: right;
 }
 
-.profile-panel {
+.rule-scope-panel {
   display: grid;
-  gap: 8px;
+  gap: 6px;
 }
 
-.profile-row {
+.rule-scope-head {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 12px;
+  gap: 10px;
+  color: var(--muted);
+  font-size: 10px;
+  font-weight: 650;
 }
 
-.profile-options {
+.rule-domains {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  overflow: hidden;
+  background: color-mix(in srgb, var(--surface) 54%, var(--panel));
+}
+
+.rule-theme-column {
   min-width: 0;
-  flex: 1 1 auto;
+  display: grid;
+  gap: 0;
+  align-items: stretch;
+  border-right: 1px solid var(--line-soft);
+}
+
+.rule-theme-column:last-child {
+  border-right: 0;
+}
+
+.rule-theme {
+  appearance: none;
+  position: relative;
+  min-width: 0;
   display: flex;
   align-items: center;
-  gap: 12px;
-}
-
-.profile-options button {
-  min-width: 0;
-  min-height: 24px;
-  border: 0;
+  justify-content: center;
+  min-height: 22px;
+  border-right: 0;
+  border-top: 0;
+  border-bottom: 0;
+  border-left: 0;
   border-radius: 0;
-  padding: 0 0 3px;
-  background: transparent;
-  color: var(--muted);
-  font: inherit;
-  font-size: 11px;
-  font-weight: 650;
+  padding: 0 8px;
+  color: var(--muted-soft);
+  font-size: 9px;
+  font-weight: 700;
+  line-height: 1.15;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  background: color-mix(in srgb, var(--surface) 68%, var(--panel));
+  font-family: inherit;
+  text-align: center;
   cursor: pointer;
 }
 
-.profile-options button:hover,
-.profile-options button:focus-visible {
+.rule-theme:hover,
+.rule-theme:focus-visible {
   color: var(--ink-strong);
+  background: color-mix(in srgb, var(--surface-hover) 82%, var(--panel));
+}
+
+.rule-theme:focus-visible {
   outline: none;
+  box-shadow: inset 0 0 0 2px color-mix(in srgb, var(--accent) 42%, transparent);
 }
 
-.profile-options button.active {
+.rule-tile-column {
+  min-width: 0;
+  display: grid;
+  gap: 0;
+  border-top: 1px solid var(--line-soft);
+}
+
+.rule-tile {
+  appearance: none;
   position: relative;
-  background: transparent;
-  color: var(--ink-strong);
-  box-shadow: inset 0 -2px 0 var(--accent);
+  min-width: 0;
+  min-height: 43px;
+  border: 0;
+  border-bottom: 1px solid var(--line-soft);
+  border-radius: 0;
+  padding: 6px 6px;
+  background: var(--panel);
+  color: var(--ink);
+  font: inherit;
+  text-align: center;
+  cursor: pointer;
 }
 
-.profile-options button.modified::after {
+.rule-tile:last-child {
+  border-bottom: 0;
+}
+
+.rule-tile:hover,
+.rule-tile:focus-visible {
+  background: color-mix(in srgb, var(--surface-hover) 76%, var(--panel));
+}
+
+.rule-tile:focus-visible {
+  outline: none;
+  box-shadow: inset 0 0 0 2px color-mix(in srgb, var(--accent) 42%, transparent);
+}
+
+.rule-tile-code {
+  display: block;
+  color: var(--ink-strong);
+  font: 700 11px/1.25 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+
+.rule-tile-name {
+  display: block;
+  overflow: hidden;
+  color: var(--muted);
+  font-size: 10px;
+  font-weight: 600;
+  line-height: 1.25;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.rule-tile.all {
+  background: color-mix(in srgb, var(--accent-soft) 72%, var(--panel));
+}
+
+.rule-tile.partial {
+  background: color-mix(in srgb, var(--partial-soft) 76%, var(--panel));
+}
+
+.rule-tile.all::before,
+.rule-tile.partial::before {
   content: "";
   position: absolute;
-  top: 1px;
-  right: -6px;
-  width: 5px;
-  height: 5px;
-  border-radius: 50%;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  height: 2px;
+  border-radius: 999px;
+}
+
+.rule-tile.all::before {
   background: var(--accent);
+}
+
+.rule-tile.partial::before {
+  background: var(--partial);
 }
 
 .profile-actions {
@@ -1262,7 +1358,7 @@ select:focus {
     justify-content: flex-start;
   }
 
-  .profile-row {
+  .rule-scope-head {
     align-items: flex-start;
     flex-direction: column;
     gap: 5px;
@@ -1294,6 +1390,18 @@ select:focus {
   .inspection-rule {
     grid-template-columns: 24px 54px minmax(0, 1fr);
     padding-left: 10px;
+  }
+
+  .rule-domains {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .rule-theme-column:nth-child(2n) {
+    border-right: 0;
+  }
+
+  .rule-theme-column:nth-child(n + 3) {
+    border-top: 1px solid var(--line-soft);
   }
 
   .rule-severity {

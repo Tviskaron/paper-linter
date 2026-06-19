@@ -91,7 +91,7 @@ const selectValueEl = byId<HTMLInputElement>("select-value");
 const rulesCountEl = byId("rules-count");
 const reportEl = byId("report");
 const copyReportBtn = byId<HTMLButtonElement>("copy-report");
-const profileOptionsEl = byId("profile-options");
+const ruleDomainsEl = byId("rule-domains");
 const profileClearBtn = byId<HTMLButtonElement>("profile-clear");
 const profileResetBtn = byId<HTMLButtonElement>("profile-reset");
 const themeToggle = byId<HTMLButtonElement>("theme-toggle");
@@ -114,41 +114,69 @@ let rerunTimer: number | undefined;
 let runSequence = 0;
 let runInProgress = false;
 const expandedFamilies = new Set<string>();
+let defaultRuleCodes = new Set<string>();
 
-type ProfileName = "essential" | "standard" | "strict" | "polish";
-
-const presetProfiles = {
-  essential: {
-    enable: ["CIT012", "PKG001"],
-    disable: ["CIT002"],
-    strict: false,
-  },
-  standard: {
-    enable: ["PKG001", "PKG002", "SEC006", "CAP002", "TEX002", "SYN001"],
-    disable: ["CIT002", "PRJ004"],
-    strict: false,
-  },
-  strict: {
-    enable: ["PKG001", "PKG002", "SEC006", "CAP002", "CIT011", "SYN001"],
-    disable: ["CIT002"],
-    strict: true,
-  },
-  polish: {
-    enable: ["TXT001", "TXT003", "TXT004", "SEC001"],
-    disable: ["CIT002", "PRJ004"],
-    strict: false,
-  },
-} satisfies Record<ProfileName, { enable: string[]; disable: string[]; strict: boolean }>;
-
-let activeProfile: ProfileName = "standard";
-let profileModified = false;
-
-const profileDescriptions: Record<ProfileName, string> = {
-  essential: "Fast build-breaking and portability checks.",
-  standard: "Balanced paper hygiene for regular authoring.",
-  strict: "Broader submission checks, including stricter citation cleanup.",
-  polish: "Light prose and presentation cleanup.",
+const defaultProfile = {
+  enable: ["PKG001", "PKG002", "SEC006", "CAP002", "TEX002", "SYN001"],
+  disable: ["CIT002", "PRJ004"],
+  strict: false,
 };
+
+type RuleDomain = {
+  id: string;
+  label: string;
+  groups: RuleBundle[];
+};
+
+type RuleBundle = {
+  code: string;
+  label: string;
+  help: string;
+  families: string[];
+};
+
+const ruleDomains: RuleDomain[] = [
+  {
+    id: "integrity",
+    label: "Integrity",
+    groups: [
+      { code: "SYN", label: "Syntax", help: "Preamble syntax problems such as unbalanced braces.", families: ["SYN"] },
+      { code: "ENV", label: "Environments", help: "Balanced and structurally consistent LaTeX begin/end pairs.", families: ["ENV"] },
+      { code: "LOG", label: "Logs", help: "Compiler, BibTeX, and auxiliary-file diagnostics.", families: ["LOG", "BLG", "AUX"] },
+      { code: "RDY", label: "Readiness", help: "Submission readiness and PDF regression checks.", families: ["RDY"] },
+    ],
+  },
+  {
+    id: "structure",
+    label: "Structure",
+    groups: [
+      { code: "PRJ", label: "Project", help: "Root discovery, includes, reachable TeX files, and orphan sources.", families: ["PRJ"] },
+      { code: "PKG", label: "Packages", help: "Package option clashes, order risks, and missing dependencies.", families: ["PKG"] },
+      { code: "SEC", label: "Sections", help: "Section hierarchy, empty sections, and heading structure.", families: ["SEC"] },
+      { code: "ALG", label: "Algorithms", help: "Algorithm labels connected to the paper text.", families: ["ALG"] },
+    ],
+  },
+  {
+    id: "references",
+    label: "References",
+    groups: [
+      { code: "CIT", label: "Citations", help: "Citation keys, bibliography reachability, style, and punctuation.", families: ["CIT"] },
+      { code: "REF", label: "Labels/refs", help: "Labels and references should be reachable and connected.", families: ["LBL", "REF"] },
+      { code: "BIB", label: "Bibliography", help: "Identifiers, required metadata, duplicates, and private fields.", families: ["BIB"] },
+      { code: "FIG", label: "Figures/tables", help: "Figure and table assets, captions, labels, and references.", families: ["FIG", "TAB"] },
+    ],
+  },
+  {
+    id: "polish",
+    label: "Polish",
+    groups: [
+      { code: "CAP", label: "Captions", help: "Figure and table captions should exist and use expected punctuation.", families: ["CAP"] },
+      { code: "TEX", label: "Typography", help: "TeX typography, non-breaking spaces, and LaTeX style checks.", families: ["TEX", "LAT"] },
+      { code: "FMT", label: "Formatting", help: "Final newlines, repeated blanks, trailing spaces, and tabs.", families: ["FMT", "WS"] },
+      { code: "TXT", label: "Prose/math", help: "Prose cleanup and math notation style checks.", families: ["TXT", "MTH"] },
+    ],
+  },
+];
 
 const groupDescriptions: Record<string, string> = {
   ALG: "Algorithm hygiene: algorithm labels should be connected to the paper text and not left orphaned.",
@@ -209,10 +237,10 @@ async function boot() {
   const linter = new PaperLinter();
   const data = JSON.parse(linter.rules_json()) as { rules: RuleView[] };
   rules = data.rules;
+  defaultRuleCodes = new Set(rules.filter((rule) => ruleEnabledByProfile(rule, defaultProfile)).map((rule) => rule.code));
   setTheme(document.documentElement.dataset.theme || localStorage.getItem("paper-linter-theme") || "light");
   bindEvents();
-  renderRuleGroups();
-  applyProfileSelection(activeProfile);
+  resetRuleSelection();
   statusEl.textContent = "waiting for source";
 }
 
@@ -241,20 +269,28 @@ function bindEvents() {
     if (file) await withSourceLoadError(() => setArchiveFile(file));
   });
 
-  profileOptionsEl.addEventListener("click", (event) => {
-    const button = (event.target as Element | null)?.closest<HTMLButtonElement>("[data-profile]");
-    const profile = button?.dataset.profile as ProfileName | undefined;
-    if (!profile || !presetProfiles[profile]) return;
-    applyProfileSelection(profile);
+  ruleDomainsEl.addEventListener("click", (event) => {
+    const target = event.target as Element | null;
+    const tileButton = target?.closest<HTMLButtonElement>("[data-rule-bundle]");
+    const domainButton = target?.closest<HTMLButtonElement>("[data-rule-domain]");
+
+    if (tileButton) {
+      toggleFamiliesSelection(parseFamilies(tileButton.dataset.ruleBundle));
+    } else if (domainButton) {
+      toggleFamiliesSelection(parseFamilies(domainButton.dataset.ruleDomain));
+    } else {
+      return;
+    }
+
+    syncSelectionState();
     scheduleAutoRun();
   });
   profileResetBtn.addEventListener("click", () => {
-    applyProfileSelection(activeProfile);
+    resetRuleSelection();
     scheduleAutoRun();
   });
   profileClearBtn.addEventListener("click", () => {
     selectedRuleCodes.clear();
-    markProfileModified();
     syncSelectionState();
     scheduleAutoRun();
   });
@@ -276,7 +312,6 @@ function bindEvents() {
     if (input.dataset.family) {
       toggleFamilySelection(input.dataset.family);
     } else if (input.dataset.ruleCode) {
-      markProfileModified();
       if (input.checked) selectedRuleCodes.add(input.dataset.ruleCode);
       else selectedRuleCodes.delete(input.dataset.ruleCode);
     }
@@ -584,10 +619,10 @@ async function runLinter(runId: number) {
     const output = JSON.parse(
       linter.check(
         JSON.stringify({
-          preset: profileModified ? null : activeProfile,
+          preset: null,
           select: [...selectedRuleCodes].sort(),
-          ignore: [],
-          strict: profileModified ? false : presetProfiles[activeProfile].strict,
+          ignore: rules.filter((rule) => !selectedRuleCodes.has(rule.code)).map((rule) => rule.code).sort(),
+          strict: false,
           all_rules: false,
           ...selectedViewOptions(),
         }),
@@ -801,46 +836,55 @@ function syncVisibleRuleCheckboxes() {
 
 function syncSelectionState() {
   syncSelectedRules();
+  renderRuleDomains();
   syncGroupCheckboxes();
   syncVisibleRuleCheckboxes();
-  renderProfileState();
+  renderSelectionActions();
 }
 
 function toggleFamilySelection(family: string) {
-  markProfileModified();
-  const familyRules = rules.filter((rule) => rule.family === family);
-  const selectedCount = familyRules.filter((rule) => selectedRuleCodes.has(rule.code)).length;
-  const shouldEnable = selectedCount === 0;
-  for (const rule of familyRules) {
-    if (shouldEnable) selectedRuleCodes.add(rule.code);
-    else selectedRuleCodes.delete(rule.code);
-  }
+  toggleFamiliesSelection([family]);
 }
 
-function applyProfileSelection(name: ProfileName) {
-  const profile = presetProfiles[name];
-  if (!profile) return;
-  activeProfile = name;
-  profileModified = false;
-  selectedRuleCodes = new Set(rules.filter((rule) => ruleEnabledByProfile(rule, profile)).map((rule) => rule.code));
+function resetRuleSelection() {
+  selectedRuleCodes = new Set(defaultRuleCodes);
   renderRuleGroups();
   syncSelectionState();
 }
 
-function renderProfileState() {
-  for (const button of profileOptionsEl.querySelectorAll<HTMLButtonElement>("[data-profile]")) {
-    const selected = button.dataset.profile === activeProfile;
-    button.classList.toggle("active", selected);
-    button.classList.toggle("modified", selected && profileModified);
-    button.setAttribute("aria-pressed", String(selected));
-    button.title = selected && profileModified ? `${profileDescriptions[activeProfile]} Modified` : "";
-  }
+function renderRuleDomains() {
+  ruleDomainsEl.innerHTML = `
+    ${ruleDomains.map((domain) => {
+        const domainFamilies = domain.groups.flatMap((group) => group.families);
+        const domainState = selectionStateForFamilies(domainFamilies);
+        return `
+        <div class="rule-theme-column">
+          <button class="rule-theme ${domainState}" type="button" data-rule-domain="${escapeHtml(domainFamilies.join(","))}" aria-pressed="${domainState === "all"}">${escapeHtml(domain.label)}</button>
+          <div class="rule-tile-column">
+          ${domain.groups.map((group) => {
+            const state = selectionStateForFamilies(group.families);
+            const helper = `${group.code} ${group.label}: ${group.help} Families: ${group.families.join(", ")}.`;
+            return `
+              <button class="rule-tile ${state}" type="button" data-rule-bundle="${escapeHtml(group.families.join(","))}" aria-label="${escapeHtml(helper)}" aria-pressed="${state === "all"}" title="${escapeHtml(helper)}">
+                <span class="rule-tile-code">${escapeHtml(group.code)}</span>
+                <span class="rule-tile-name">${escapeHtml(group.label)}</span>
+              </button>
+            `;
+          }).join("")}
+          </div>
+        </div>
+        `;
+      }).join("")}
+  `;
+}
+
+function renderSelectionActions() {
   const selectedCount = selectedRuleCodes.size;
   rulesCountEl.textContent = `${selectedCount} selected`;
-  rulesCountEl.title = profileDescriptions[activeProfile];
+  rulesCountEl.title = "";
   profileClearBtn.textContent = "Clear all";
   profileClearBtn.disabled = selectedCount === 0;
-  profileResetBtn.hidden = profileMatchesActiveProfile();
+  profileResetBtn.hidden = selectionMatchesDefault();
 }
 
 function ruleEnabledByProfile(rule: RuleView, profile: { enable: string[]; disable: string[]; strict: boolean }) {
@@ -854,20 +898,31 @@ function patternMatches(code: string, patterns: string[]) {
   return patterns.some((pattern) => code.startsWith(pattern));
 }
 
-function markProfileModified() {
-  profileModified = true;
-  renderProfileState();
+function toggleFamiliesSelection(families: string[]) {
+  const targetRules = rules.filter((rule) => families.includes(rule.family));
+  const selectedCount = targetRules.filter((rule) => selectedRuleCodes.has(rule.code)).length;
+  const shouldEnable = selectedCount === 0;
+  for (const rule of targetRules) {
+    if (shouldEnable) selectedRuleCodes.add(rule.code);
+    else selectedRuleCodes.delete(rule.code);
+  }
 }
 
-function profileMatchesActiveProfile() {
-  const profile = presetProfiles[activeProfile];
-  const profileCodes = rules.filter((rule) => ruleEnabledByProfile(rule, profile)).map((rule) => rule.code);
-  if (profileCodes.length !== selectedRuleCodes.size) return false;
-  return profileCodes.every((code) => selectedRuleCodes.has(code));
+function selectionStateForFamilies(families: string[]) {
+  const targetRules = rules.filter((rule) => families.includes(rule.family));
+  const selectedCount = targetRules.filter((rule) => selectedRuleCodes.has(rule.code)).length;
+  if (targetRules.length > 0 && selectedCount === targetRules.length) return "all";
+  if (selectedCount > 0) return "partial";
+  return "none";
 }
 
-function profileLabel(profile: ProfileName) {
-  return profile[0].toUpperCase() + profile.slice(1);
+function selectionMatchesDefault() {
+  if (defaultRuleCodes.size !== selectedRuleCodes.size) return false;
+  return [...defaultRuleCodes].every((code) => selectedRuleCodes.has(code));
+}
+
+function parseFamilies(value: string | undefined) {
+  return (value ?? "").split(",").map((family) => family.trim()).filter(Boolean);
 }
 
 function groupedRules() {

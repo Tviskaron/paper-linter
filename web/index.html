@@ -41,30 +41,35 @@
               </div>
             </div>
 
-            <label>Preset
-              <select id="preset-select" name="preset">
-                <option value="custom">custom</option>
-                <option value="essential">essential</option>
-                <option value="standard" selected>standard</option>
-                <option value="strict">strict</option>
-                <option value="polish">polish</option>
-              </select>
-            </label>
           </fieldset>
 
           <span id="status" class="status visually-hidden" aria-live="polite"></span>
 
           <fieldset class="panel-section">
-            <legend>Rule Groups</legend>
-            <div id="rule-groups" class="group-grid"></div>
-          </fieldset>
-
-          <fieldset class="panel-section">
-            <legend>Rules</legend>
-            <div class="rule-toolbar">
-              <input id="rule-filter" type="text" placeholder="Filter by code or name" />
+            <legend class="rules-legend">
+              <span>Rules</span>
+              <span id="rules-count" class="rules-count"></span>
+            </legend>
+            <div class="profile-panel">
+              <div class="profile-row">
+                <div id="profile-options" class="profile-options" aria-label="Rule profile">
+                  <button type="button" data-profile="essential">Essential</button>
+                  <button type="button" data-profile="standard">Standard</button>
+                  <button type="button" data-profile="strict">Strict</button>
+                  <button type="button" data-profile="polish">Polish</button>
+                </div>
+                <div class="profile-actions">
+                  <button id="profile-clear" class="profile-action" type="button">Clear all</button>
+                  <button id="profile-reset" class="profile-action" type="button" hidden>Reset</button>
+                </div>
+              </div>
             </div>
-            <div id="rules" class="rules"></div>
+            <div class="rule-toolbar">
+              <label>Search
+                <input id="rule-filter" type="text" placeholder="Code, group, or rule name" />
+              </label>
+            </div>
+            <div id="rule-groups" class="inspection-tree"></div>
             <input type="hidden" name="select" id="select-value" />
           </fieldset>
         </form>

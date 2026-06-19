@@ -13,6 +13,7 @@ const EXCLUDED_PATH_PARTS = new Set([
   ".nuxt",
   ".venv",
   "__pycache__",
+  "__macosx",
   "build",
   "dist",
   "node_modules",
@@ -85,13 +86,15 @@ type LoadedFile = {
 
 const form = byId<HTMLFormElement>("lint-form");
 const statusEl = byId("status");
-const rulesEl = byId("rules");
 const ruleGroupsEl = byId("rule-groups");
 const filterEl = byId<HTMLInputElement>("rule-filter");
 const selectValueEl = byId<HTMLInputElement>("select-value");
+const rulesCountEl = byId("rules-count");
 const reportEl = byId("report");
 const copyReportBtn = byId<HTMLButtonElement>("copy-report");
-const presetSelect = byId<HTMLSelectElement>("preset-select");
+const profileOptionsEl = byId("profile-options");
+const profileClearBtn = byId<HTMLButtonElement>("profile-clear");
+const profileResetBtn = byId<HTMLButtonElement>("profile-reset");
 const themeToggle = byId<HTMLButtonElement>("theme-toggle");
 const reportTabsEl = byId("report-tabs");
 const archiveInput = byId<HTMLInputElement>("archive-input");
@@ -111,6 +114,9 @@ let availableReportViews: ReportView[] = [];
 let rerunTimer: number | undefined;
 let runSequence = 0;
 let runInProgress = false;
+const expandedFamilies = new Set<string>();
+
+type ProfileName = "essential" | "standard" | "strict" | "polish";
 
 const presetProfiles = {
   essential: {
@@ -133,7 +139,17 @@ const presetProfiles = {
     disable: ["CIT002", "PRJ004"],
     strict: false,
   },
-} satisfies Record<string, { enable: string[]; disable: string[]; strict: boolean }>;
+} satisfies Record<ProfileName, { enable: string[]; disable: string[]; strict: boolean }>;
+
+let activeProfile: ProfileName = "standard";
+let profileModified = false;
+
+const profileDescriptions: Record<ProfileName, string> = {
+  essential: "Fast build-breaking and portability checks.",
+  standard: "Balanced paper hygiene for regular authoring.",
+  strict: "Broader submission checks, including stricter citation cleanup.",
+  polish: "Light prose and presentation cleanup.",
+};
 
 const groupDescriptions: Record<string, string> = {
   ALG: "Algorithm hygiene: algorithm labels should be connected to the paper text and not left orphaned.",
@@ -161,6 +177,32 @@ const groupDescriptions: Record<string, string> = {
   WS: "Whitespace cleanup: trailing spaces and tabs at line endings.",
 };
 
+const groupLabels: Record<string, string> = {
+  ALG: "Algorithms",
+  AUX: "Compiler Aux",
+  BIB: "Bibliography",
+  BLG: "BibTeX Logs",
+  CAP: "Captions",
+  CIT: "Citations",
+  ENV: "Environments",
+  FIG: "Figures",
+  FMT: "Formatting",
+  LAT: "LaTeX Style",
+  LBL: "Labels",
+  LOG: "Compile Logs",
+  MTH: "Math",
+  PKG: "Packages",
+  PRJ: "Project",
+  RDY: "Readiness",
+  REF: "References",
+  SEC: "Sections",
+  SYN: "Syntax",
+  TAB: "Tables",
+  TEX: "TeX Typography",
+  TXT: "Prose",
+  WS: "Whitespace",
+};
+
 void boot();
 
 async function boot() {
@@ -171,8 +213,7 @@ async function boot() {
   setTheme(localStorage.getItem("paper-linter-theme") || "light");
   bindEvents();
   renderRuleGroups();
-  renderRules();
-  applyPresetSelection(presetSelect.value);
+  applyProfileSelection(activeProfile);
   statusEl.textContent = "waiting for source";
 }
 
@@ -201,31 +242,46 @@ function bindEvents() {
     if (file) await withSourceLoadError(() => setArchiveFile(file));
   });
 
-  presetSelect.addEventListener("change", () => {
-    if (presetSelect.value !== "custom") applyPresetSelection(presetSelect.value);
+  profileOptionsEl.addEventListener("click", (event) => {
+    const button = (event.target as Element | null)?.closest<HTMLButtonElement>("[data-profile]");
+    const profile = button?.dataset.profile as ProfileName | undefined;
+    if (!profile || !presetProfiles[profile]) return;
+    applyProfileSelection(profile);
     scheduleAutoRun();
   });
-  filterEl.addEventListener("input", renderRules);
-  rulesEl.addEventListener("change", (event) => {
-    const input = event.target as HTMLInputElement;
-    if (!input.matches('input[type="checkbox"]')) return;
-    markCustomPreset();
-    if (input.checked) selectedRuleCodes.add(input.value);
-    else selectedRuleCodes.delete(input.value);
+  profileResetBtn.addEventListener("click", () => {
+    applyProfileSelection(activeProfile);
+    scheduleAutoRun();
+  });
+  profileClearBtn.addEventListener("click", () => {
+    selectedRuleCodes.clear();
+    markProfileModified();
     syncSelectionState();
     scheduleAutoRun();
+  });
+  filterEl.addEventListener("input", renderRuleGroups);
+  ruleGroupsEl.addEventListener("click", (event) => {
+    const button = (event.target as Element | null)?.closest<HTMLButtonElement>("[data-family-toggle]");
+    if (!button) return;
+    if ((event.target as Element | null)?.matches('input[type="checkbox"]')) return;
+    const family = button.dataset.familyToggle;
+    if (!family) return;
+    if (expandedFamilies.has(family)) expandedFamilies.delete(family);
+    else expandedFamilies.add(family);
+    renderRuleGroups();
   });
   ruleGroupsEl.addEventListener("change", (event) => {
     const input = event.target as HTMLInputElement;
     if (!input.matches('input[type="checkbox"]')) return;
-    markCustomPreset();
-    const familyRules = rules.filter((rule) => rule.family === input.value);
-    const selectedCount = familyRules.filter((rule) => selectedRuleCodes.has(rule.code)).length;
-    const shouldEnable = selectedCount < familyRules.length;
-    for (const rule of familyRules) {
-      if (shouldEnable) selectedRuleCodes.add(rule.code);
-      else selectedRuleCodes.delete(rule.code);
+
+    if (input.dataset.family) {
+      toggleFamilySelection(input.dataset.family);
+    } else if (input.dataset.ruleCode) {
+      markProfileModified();
+      if (input.checked) selectedRuleCodes.add(input.dataset.ruleCode);
+      else selectedRuleCodes.delete(input.dataset.ruleCode);
     }
+
     syncSelectionState();
     scheduleAutoRun();
   });
@@ -528,10 +584,10 @@ async function runLinter(runId: number) {
     const output = JSON.parse(
       linter.check(
         JSON.stringify({
-          preset: presetSelect.value === "custom" ? null : presetSelect.value,
+          preset: profileModified ? null : activeProfile,
           select: [...selectedRuleCodes].sort(),
           ignore: [],
-          strict: presetProfiles[presetSelect.value as keyof typeof presetProfiles]?.strict ?? false,
+          strict: profileModified ? false : presetProfiles[activeProfile].strict,
           all_rules: false,
           ...selectedViewOptions(),
         }),
@@ -628,40 +684,86 @@ async function copyReport() {
   }
 }
 
-function renderRules() {
+function renderRuleGroups() {
   const filter = filterEl.value.trim().toLowerCase();
-  rulesEl.innerHTML = "";
-  for (const rule of rules) {
-    const haystack = `${rule.code} ${rule.name} ${rule.summary}`.toLowerCase();
-    if (filter && !haystack.includes(filter)) continue;
-    const label = document.createElement("label");
-    label.className = "rule";
-    label.innerHTML = `
-      <input type="checkbox" value="${rule.code}" ${selectedRuleCodes.has(rule.code) ? "checked" : ""}>
-      <code>${rule.code}</code>
-      <span>${escapeHtml(rule.name)}<small>${escapeHtml(rule.summary)}</small></span>
+  ruleGroupsEl.innerHTML = "";
+  let visibleGroups = 0;
+
+  for (const [family, familyRules] of groupedRules()) {
+    const title = groupLabel(family);
+    const description = groupDescription(family);
+    const familyMatches = filter.length > 0 && `${family} ${title} ${description}`.toLowerCase().includes(filter);
+    const matchingRules = filter ? familyRules.filter((rule) => ruleMatchesFilter(rule, filter)) : familyRules;
+    if (filter && !familyMatches && matchingRules.length === 0) continue;
+
+    const selectedCount = familyRules.filter((rule) => selectedRuleCodes.has(rule.code)).length;
+    const state = selectedCount === familyRules.length ? "all" : selectedCount > 0 ? "partial" : "none";
+    const canExpand = familyRules.length > 1;
+    const expanded = canExpand && (filter.length > 0 || expandedFamilies.has(family));
+    const visibleRules = filter && !familyMatches ? matchingRules : familyRules;
+    const group = document.createElement("section");
+    group.className = `inspection-group ${state} ${expanded ? "expanded" : ""}`;
+    group.dataset.family = family;
+    const familyControl = canExpand ? `
+      <div class="inspection-family">
+        <label class="family-check-zone" aria-label="Toggle ${escapeHtml(title)} rules">
+          <input class="family-check" type="checkbox" data-family="${escapeHtml(family)}">
+        </label>
+        <button class="family-toggle" type="button" data-family-toggle="${escapeHtml(family)}" aria-expanded="${expanded}" aria-controls="rules-${escapeHtml(family)}">
+          <span class="family-copy">
+            <span class="family-title"><span class="family-chevron" aria-hidden="true"></span><code>${escapeHtml(family)}</code>${escapeHtml(title)}</span>
+            <span class="family-description">${escapeHtml(description)}</span>
+          </span>
+          <span class="family-count">${selectedCount}/${familyRules.length}</span>
+        </button>
+      </div>
+    ` : `
+      <label class="inspection-family single-family">
+        <span class="family-check-zone" aria-hidden="true">
+          <input class="family-check" type="checkbox" data-family="${escapeHtml(family)}">
+        </span>
+        <span class="family-toggle single">
+          <span class="family-copy">
+            <span class="family-title"><code>${escapeHtml(family)}</code>${escapeHtml(title)}</span>
+            <span class="family-description">${escapeHtml(description)}</span>
+          </span>
+          <span class="family-count">${selectedCount}/${familyRules.length}</span>
+        </span>
+      </label>
     `;
-    rulesEl.appendChild(label);
+    group.innerHTML = `
+      ${familyControl}
+      <div id="rules-${escapeHtml(family)}" class="inspection-rules" ${expanded ? "" : "hidden"}>
+        ${visibleRules.map(renderRuleRow).join("")}
+      </div>
+    `;
+    ruleGroupsEl.appendChild(group);
+    visibleGroups += 1;
   }
+
+  if (visibleGroups === 0) {
+    const empty = document.createElement("div");
+    empty.className = "inspection-empty";
+    empty.textContent = "No rules match this search.";
+    ruleGroupsEl.appendChild(empty);
+  }
+
   syncSelectionState();
 }
 
-function renderRuleGroups() {
-  ruleGroupsEl.innerHTML = "";
-  for (const [family, familyRules] of groupedRules()) {
-    const label = document.createElement("label");
-    const description = groupDescription(family);
-    label.className = "group-row";
-    label.dataset.tooltip = description;
-    label.setAttribute("aria-label", `${family}: ${description}`);
-    label.innerHTML = `
-      <input type="checkbox" value="${family}">
-      <span>${family}</span>
-      <small>${familyRules.length}</small>
-    `;
-    ruleGroupsEl.appendChild(label);
-  }
-  syncSelectionState();
+function renderRuleRow(rule: RuleView) {
+  const selected = selectedRuleCodes.has(rule.code);
+  return `
+    <label class="inspection-rule ${rule.severity} ${selected ? "selected" : ""}" data-rule-family="${escapeHtml(rule.family)}">
+      <input type="checkbox" data-rule-code="${escapeHtml(rule.code)}" ${selected ? "checked" : ""}>
+      <code>${escapeHtml(rule.code)}</code>
+      <span class="rule-copy">
+        <span class="rule-name">${escapeHtml(rule.name)}</span>
+        <span class="rule-summary">${escapeHtml(rule.summary)}</span>
+      </span>
+      <span class="rule-severity">${escapeHtml(rule.severity)}</span>
+    </label>
+  `;
 }
 
 function syncSelectedRules() {
@@ -669,12 +771,13 @@ function syncSelectedRules() {
 }
 
 function syncGroupCheckboxes() {
-  for (const input of ruleGroupsEl.querySelectorAll<HTMLInputElement>('input[type="checkbox"]')) {
-    const familyRules = rules.filter((rule) => rule.family === input.value);
+  for (const input of ruleGroupsEl.querySelectorAll<HTMLInputElement>(".family-check")) {
+    const family = input.dataset.family ?? "";
+    const familyRules = rules.filter((rule) => rule.family === family);
     const selectedCount = familyRules.filter((rule) => selectedRuleCodes.has(rule.code)).length;
     const allSelected = selectedCount > 0 && selectedCount === familyRules.length;
     const partiallySelected = selectedCount > 0 && selectedCount < familyRules.length;
-    const row = input.closest(".group-row");
+    const row = input.closest(".inspection-group");
     input.checked = allSelected;
     input.indeterminate = partiallySelected;
     input.dataset.state = allSelected ? "all" : partiallySelected ? "partial" : "none";
@@ -682,14 +785,16 @@ function syncGroupCheckboxes() {
     row?.classList.toggle("all", allSelected);
     row?.classList.toggle("partial", partiallySelected);
     row?.classList.toggle("none", !allSelected && !partiallySelected);
-    const small = row?.querySelector("small");
-    if (small) small.textContent = `${selectedCount}/${familyRules.length}`;
+    const count = row?.querySelector(".family-count");
+    if (count) count.textContent = `${selectedCount}/${familyRules.length}`;
   }
 }
 
 function syncVisibleRuleCheckboxes() {
-  for (const input of rulesEl.querySelectorAll<HTMLInputElement>('input[type="checkbox"]')) {
-    input.checked = selectedRuleCodes.has(input.value);
+  for (const input of ruleGroupsEl.querySelectorAll<HTMLInputElement>("[data-rule-code]")) {
+    const selected = selectedRuleCodes.has(input.dataset.ruleCode ?? "");
+    input.checked = selected;
+    input.closest(".inspection-rule")?.classList.toggle("selected", selected);
   }
 }
 
@@ -697,15 +802,44 @@ function syncSelectionState() {
   syncSelectedRules();
   syncGroupCheckboxes();
   syncVisibleRuleCheckboxes();
+  renderProfileState();
 }
 
-function applyPresetSelection(name: string) {
-  const profile = presetProfiles[name as keyof typeof presetProfiles];
+function toggleFamilySelection(family: string) {
+  markProfileModified();
+  const familyRules = rules.filter((rule) => rule.family === family);
+  const selectedCount = familyRules.filter((rule) => selectedRuleCodes.has(rule.code)).length;
+  const shouldEnable = selectedCount === 0;
+  for (const rule of familyRules) {
+    if (shouldEnable) selectedRuleCodes.add(rule.code);
+    else selectedRuleCodes.delete(rule.code);
+  }
+}
+
+function applyProfileSelection(name: ProfileName) {
+  const profile = presetProfiles[name];
   if (!profile) return;
+  activeProfile = name;
+  profileModified = false;
   selectedRuleCodes = new Set(rules.filter((rule) => ruleEnabledByProfile(rule, profile)).map((rule) => rule.code));
-  renderRules();
   renderRuleGroups();
   syncSelectionState();
+}
+
+function renderProfileState() {
+  for (const button of profileOptionsEl.querySelectorAll<HTMLButtonElement>("[data-profile]")) {
+    const selected = button.dataset.profile === activeProfile;
+    button.classList.toggle("active", selected);
+    button.classList.toggle("modified", selected && profileModified);
+    button.setAttribute("aria-pressed", String(selected));
+    button.title = selected && profileModified ? `${profileDescriptions[activeProfile]} Modified` : "";
+  }
+  const selectedCount = selectedRuleCodes.size;
+  rulesCountEl.textContent = `${selectedCount} selected`;
+  rulesCountEl.title = profileDescriptions[activeProfile];
+  profileClearBtn.textContent = "Clear all";
+  profileClearBtn.disabled = selectedCount === 0;
+  profileResetBtn.hidden = profileMatchesActiveProfile();
 }
 
 function ruleEnabledByProfile(rule: RuleView, profile: { enable: string[]; disable: string[]; strict: boolean }) {
@@ -719,8 +853,20 @@ function patternMatches(code: string, patterns: string[]) {
   return patterns.some((pattern) => code.startsWith(pattern));
 }
 
-function markCustomPreset() {
-  if (presetSelect.value !== "custom") presetSelect.value = "custom";
+function markProfileModified() {
+  profileModified = true;
+  renderProfileState();
+}
+
+function profileMatchesActiveProfile() {
+  const profile = presetProfiles[activeProfile];
+  const profileCodes = rules.filter((rule) => ruleEnabledByProfile(rule, profile)).map((rule) => rule.code);
+  if (profileCodes.length !== selectedRuleCodes.size) return false;
+  return profileCodes.every((code) => selectedRuleCodes.has(code));
+}
+
+function profileLabel(profile: ProfileName) {
+  return profile[0].toUpperCase() + profile.slice(1);
 }
 
 function groupedRules() {
@@ -730,6 +876,14 @@ function groupedRules() {
     groups.get(rule.family)?.push(rule);
   }
   return [...groups.entries()].sort(([left], [right]) => left.localeCompare(right));
+}
+
+function ruleMatchesFilter(rule: RuleView, filter: string) {
+  return `${rule.code} ${rule.name} ${rule.summary} ${rule.severity}`.toLowerCase().includes(filter);
+}
+
+function groupLabel(family: string) {
+  return groupLabels[family] || family;
 }
 
 function groupDescription(family: string) {
@@ -930,6 +1084,7 @@ function shouldKeepSourceFile(path: string) {
   if (EXCLUDED_PATH_PREFIXES.some((prefix) => lower.startsWith(prefix))) return false;
   const parts = lower.split("/");
   if (parts.some((part) => EXCLUDED_PATH_PARTS.has(part))) return false;
+  if (parts.some((part) => part.startsWith("._"))) return false;
   return ![...EXCLUDED_FILE_EXTENSIONS].some((extension) => lower.endsWith(extension));
 }
 

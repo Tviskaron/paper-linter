@@ -44,6 +44,9 @@ impl PaperLinter {
 
     pub fn add_file(&mut self, path: &str, bytes: &[u8]) -> Result<(), String> {
         let normalized = normalize_upload_path(path)?;
+        if should_skip_upload_path(&normalized) {
+            return Ok(());
+        }
         let previous = self.files.get(&normalized).map_or(0, Vec::len);
         let total = self.total_bytes - previous + bytes.len();
         if total > INPUT_LIMIT_BYTES {
@@ -332,6 +335,15 @@ fn normalize_upload_path(path: &str) -> Result<PathBuf, String> {
         return Err("empty path".to_string());
     }
     Ok(normalized)
+}
+
+fn should_skip_upload_path(path: &Path) -> bool {
+    path.components().any(|component| {
+        let Some(name) = component.as_os_str().to_str() else {
+            return false;
+        };
+        name.eq_ignore_ascii_case("__MACOSX") || name.starts_with("._")
+    })
 }
 
 #[derive(Debug, Clone)]
@@ -1317,6 +1329,24 @@ Body.
         );
 
         assert_eq!(message, "selected root 'missing.tex' was not found");
+    }
+
+    #[test]
+    fn ignores_macos_archive_metadata_files() {
+        let output = check(
+            &[
+                (
+                    "root.tex",
+                    br"\documentclass{article}\begin{document}Body.\end{document}",
+                ),
+                ("__MACOSX/._root.tex", &[0xff, 0xfe, 0xfd]),
+                ("._root.tex", &[0xff, 0xfe, 0xfd]),
+            ],
+            r#"{"preset":null}"#,
+        );
+
+        assert_eq!(output["summary"]["files_checked"], 1);
+        assert_eq!(output["checked_files"], serde_json::json!(["root.tex"]));
     }
 
     #[test]

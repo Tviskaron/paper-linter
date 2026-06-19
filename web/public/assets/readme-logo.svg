@@ -1,0 +1,26 @@
+<svg viewBox="0 0 430 96" role="img" aria-labelledby="title desc" xmlns="http://www.w3.org/2000/svg">
+  <title id="title">paper-linter logo</title>
+  <desc id="desc">A document icon with a mint lightning bolt and the word paper-linter.</desc>
+  <style>
+    .paper { fill: none; stroke: #475569; stroke-linecap: round; stroke-linejoin: round; }
+    .line { fill: none; stroke: #94a3b8; stroke-linecap: round; }
+    .bolt { fill: #72d5c8; }
+    .wordmark { font: 700 40px/1 ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace; letter-spacing: 0; }
+    .word-paper { fill: #475569; }
+    .word-linter { fill: #72d5c8; }
+    @media (prefers-color-scheme: dark) {
+      .paper { stroke: #c9d1d9; }
+      .line { stroke: #8b949e; }
+      .word-paper { fill: #c9d1d9; }
+    }
+  </style>
+  <g transform="translate(16 16)">
+    <path class="line" d="M39 35h5M35 44h9" stroke-width="3.1" />
+    <path class="paper" d="M25 54h19a7 7 0 0 0 7-7V21L39 9H26a7 7 0 0 0-7 7v10" stroke-width="5.4" />
+    <path class="paper" d="M39 10v9a4 4 0 0 0 4 4h8" stroke-width="5.4" />
+    <path class="bolt" d="M27 21 14 38h10l-5 17 19-24H27V21Z" />
+  </g>
+  <text class="wordmark" x="96" y="52" dominant-baseline="middle">
+    <tspan class="word-paper">paper-</tspan><tspan class="word-linter">linter.</tspan>
+  </text>
+</svg>

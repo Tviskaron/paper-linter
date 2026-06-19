@@ -1,16 +1,15 @@
-<svg viewBox="180 0 280 320" role="img" aria-label="Paper Linter" xmlns="http://www.w3.org/2000/svg">
-  <rect width="280" height="320" x="180" fill="#0a0c11" />
-  <g transform="translate(12,18)">
-    <path fill="none" stroke="#edeff1" stroke-width="14" stroke-linecap="round" stroke-linejoin="round" d="M 222,134 V 42 C 222,22 238,6 258,6 h 118 l 70,70 v 198 c 0,20 -16,36 -36,36 H 258 c -20,0 -36,-16 -36,-36" />
-    <path fill="none" stroke="#edeff1" stroke-width="14" stroke-linecap="round" stroke-linejoin="round" d="m 376,7 v 59 c 0,11 9,20 20,20 h 49" />
-    <path fill="#72D5C8" d="m 275,87 -99,112 h 73 L 196,300 316,167 h -78 z" />
-    <path fill="none" stroke="#a5a8ad" stroke-width="6" stroke-linecap="round" stroke-linejoin="round" opacity=".95" d="m 294,121 h 54" />
-    <path fill="none" stroke="#a5a8ad" stroke-width="6" stroke-linecap="round" stroke-linejoin="round" opacity=".95" d="m 367,121 h 14" />
-    <path fill="none" stroke="#a5a8ad" stroke-width="6" stroke-linecap="round" stroke-linejoin="round" opacity=".95" d="m 311,163 h 47" />
-    <path fill="none" stroke="#a5a8ad" stroke-width="6" stroke-linecap="round" stroke-linejoin="round" opacity=".95" d="m 377,163 h 17" />
-    <path fill="none" stroke="#a5a8ad" stroke-width="6" stroke-linecap="round" stroke-linejoin="round" opacity=".95" d="m 290,203 h 81" />
-    <path fill="none" stroke="#a5a8ad" stroke-width="6" stroke-linecap="round" stroke-linejoin="round" opacity=".95" d="m 394,203 h 18" />
-    <path fill="none" stroke="#a5a8ad" stroke-width="6" stroke-linecap="round" stroke-linejoin="round" opacity=".95" d="m 247,249 h 12" />
-    <path fill="none" stroke="#a5a8ad" stroke-width="6" stroke-linecap="round" stroke-linejoin="round" opacity=".95" d="m 289,249 h 87" />
-  </g>
+<svg viewBox="0 0 64 64" role="img" aria-label="Paper Linter" xmlns="http://www.w3.org/2000/svg">
+  <style>
+    .paper { fill: none; stroke: #475569; stroke-linecap: round; stroke-linejoin: round; }
+    .line { fill: none; stroke: #94a3b8; stroke-linecap: round; }
+    .bolt { fill: #72d5c8; }
+    @media (prefers-color-scheme: dark) {
+      .paper { stroke: #c9d1d9; }
+      .line { stroke: #8b949e; }
+    }
+  </style>
+  <path class="paper" d="M25 54h19a7 7 0 0 0 7-7V21L39 9H26a7 7 0 0 0-7 7v10" stroke-width="5.4" />
+  <path class="paper" d="M39 10v9a4 4 0 0 0 4 4h8" stroke-width="5.4" />
+  <path class="bolt" d="M27 21 14 38h10l-5 17 19-24H27V21Z" />
+  <path class="line" d="M39 35h5M35 44h9" stroke-width="3.1" />
 </svg>

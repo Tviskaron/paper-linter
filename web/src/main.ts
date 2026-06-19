@@ -1,7 +1,6 @@
 import { gunzipSync, unzipSync } from "fflate";
 import untar from "js-untar";
 import init, { PaperLinter } from "../pkg/paper_linter.js";
-import "./styles.css";
 
 const MAX_UPLOAD_BYTES = 250 * 1024 * 1024;
 const EXCLUDED_PATH_PARTS = new Set([
@@ -210,7 +209,7 @@ async function boot() {
   const linter = new PaperLinter();
   const data = JSON.parse(linter.rules_json()) as { rules: RuleView[] };
   rules = data.rules;
-  setTheme(localStorage.getItem("paper-linter-theme") || "light");
+  setTheme(document.documentElement.dataset.theme || localStorage.getItem("paper-linter-theme") || "light");
   bindEvents();
   renderRuleGroups();
   applyProfileSelection(activeProfile);
@@ -303,6 +302,7 @@ function bindEvents() {
 }
 
 function setTheme(theme: string) {
+  document.documentElement.dataset.theme = theme;
   document.body.dataset.theme = theme;
   themeToggle.textContent = theme === "dark" ? "Light mode" : "Dark mode";
   themeToggle.setAttribute("aria-pressed", String(theme === "dark"));
@@ -701,6 +701,7 @@ function renderRuleGroups() {
     const canExpand = familyRules.length > 1;
     const expanded = canExpand && (filter.length > 0 || expandedFamilies.has(family));
     const visibleRules = filter && !familyMatches ? matchingRules : familyRules;
+    const singleRule = familyRules[0];
     const group = document.createElement("section");
     group.className = `inspection-group ${state} ${expanded ? "expanded" : ""}`;
     group.dataset.family = family;
@@ -727,7 +728,7 @@ function renderRuleGroups() {
             <span class="family-title"><code>${escapeHtml(family)}</code>${escapeHtml(title)}</span>
             <span class="family-description">${escapeHtml(description)}</span>
           </span>
-          <span class="family-count">${selectedCount}/${familyRules.length}</span>
+          <span class="family-severity ${escapeHtml(singleRule.severity)}">${escapeHtml(singleRule.severity)}</span>
         </span>
       </label>
     `;
